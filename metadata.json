@@ -1,0 +1,6 @@
+{
+  "name": "Handraw · 把想法，画出来",
+  "description": "面向小红书社媒卡、信息图、漫画分镜与绘本插画的结构化手绘创作工作台，支持多平台提示词润色、分类画风库与可视化配色选型。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
