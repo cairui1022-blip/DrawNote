@@ -105,7 +105,7 @@ export interface StyleItem {
   defaultColorId?: string;
   recommendedKinds: PurposeKind[];
   image: string;
-  palettePreview: [string, string, string];
+  palettePreview: string[];
   updatedAt?: string;
 }
 

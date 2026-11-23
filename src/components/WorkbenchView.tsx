@@ -1,18 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowUpRight,
+  BarChart3,
   Bell,
   Bookmark,
   BookmarkPlus,
+  BookOpenText,
   Check,
+  ChevronDown,
+  ChevronUp,
   Copy,
   Download,
+  Image as ImageIcon,
   LayoutGrid,
+  LayoutTemplate,
   Palette,
   Pencil,
   Pin,
   RefreshCw,
-  SlidersHorizontal,
+  ShoppingBag,
+  Smile,
   Sparkles,
   Trash2,
   Wand2,
@@ -27,14 +34,18 @@ import {
   STYLES,
 } from '../data/catalog';
 import {
+  applyQuickRefinementToPrompt,
   applyUserTemplateToDraft,
   buildStructuredPrompt,
   getLayoutsForKind,
   pickRecommendedStyleForKind,
+  PROMPT_REFINEMENT_OPTIONS,
   resolveInitialWorkbenchMode,
   summarizeDraftConditions,
+  type PromptRefinementId,
 } from '../utils/promptEngine';
 import { LayoutSchematic, StyleArtwork } from './CatalogArtwork';
+import { RecipeMoodboard } from './RecipeMoodboard';
 import { VisualPickerModal, type PickerSlot } from './VisualPickerModal';
 import type {
   CreationDraft,
@@ -69,8 +80,17 @@ interface WorkbenchViewProps {
   onRecordRecentStyle: (styleId: string) => void;
   onToggleWaitlist: () => void;
   onOpenTasks: () => void;
+  onNotify: (text: string, tone?: 'success' | 'info') => void;
   isAdmin: boolean;
   onOpenSkillAdmin?: () => void;
+}
+
+interface SessionVersion {
+  id: string;
+  label: string;
+  text: string;
+  format: PromptFormat;
+  usedAi: boolean;
 }
 
 const FORMAT_OPTIONS: Array<{ id: PromptFormat; label: string; hint: string }> = [
@@ -78,6 +98,25 @@ const FORMAT_OPTIONS: Array<{ id: PromptFormat; label: string; hint: string }> =
   { id: 'en_mj', label: 'Midjourney 英文', hint: '自动附带 --ar 画幅参数' },
   { id: 'safe_style', label: '去作者名安全版', hint: '纯视觉笔触描述，防审核拦截' },
 ];
+
+const SCENE_ICONS: Record<PurposeKind, typeof LayoutTemplate> = {
+  'social-card': LayoutTemplate,
+  infographic: BarChart3,
+  comic: BookOpenText,
+  'ip-character': Smile,
+  ecommerce: ShoppingBag,
+  'pure-image': ImageIcon,
+};
+
+function getTinyRatioDims(ratio: string): { w: number; h: number } {
+  const [rw, rh] = ratio.split(':').map(Number);
+  if (!rw || !rh) return { w: 12, h: 16 };
+  const max = 16;
+  if (rw >= rh) {
+    return { w: max, h: Math.max(8, Math.round((max * rh) / rw)) };
+  }
+  return { w: Math.max(8, Math.round((max * rw) / rh)), h: max };
+}
 
 export function WorkbenchView({
   session,
@@ -96,10 +135,10 @@ export function WorkbenchView({
   onRecordRecentStyle,
   onToggleWaitlist,
   onOpenTasks,
+  onNotify,
   isAdmin,
   onOpenSkillAdmin,
 }: WorkbenchViewProps) {
-  // No available image models -> smart default to 'prompt'
   const availableImageModels: string[] = [];
   const [mode, setMode] = useState<WorkbenchMode>(() =>
     resolveInitialWorkbenchMode(availableImageModels, null, false)
@@ -107,16 +146,31 @@ export function WorkbenchView({
   const [format, setFormat] = useState<PromptFormat>(lastPrompt?.format ?? 'cn_natural');
   const [useAiPolish, setUseAiPolish] = useState(true);
   const [pickerSlot, setPickerSlot] = useState<PickerSlot | null>(null);
-  const [accentExpanded, setAccentExpanded] = useState(false);
+  const [templatesExpanded, setTemplatesExpanded] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [errorBanner, setErrorBanner] = useState<{ message: string; canFallback?: boolean } | null>(
     null
   );
   const [copied, setCopied] = useState(false);
 
-  // Personal Template UX state
+  const [sessionVersions, setSessionVersions] = useState<SessionVersion[]>(() =>
+    lastPrompt
+      ? [
+          {
+            id: 'v_init',
+            label: 'v1',
+            text: lastPrompt.text,
+            format: lastPrompt.format,
+            usedAi: lastPrompt.usedAi,
+          },
+        ]
+      : []
+  );
+  const [activeVersionId, setActiveVersionId] = useState<string | null>(() =>
+    lastPrompt ? 'v_init' : null
+  );
+
   const [activeTemplateId, setActiveTemplateId] = useState<string | null>(null);
-  const [templateToast, setTemplateToast] = useState<string | null>(null);
   const [templateModal, setTemplateModal] = useState<{
     mode: 'create' | 'rename';
     targetId?: string;
@@ -127,13 +181,11 @@ export function WorkbenchView({
   } | null>(null);
 
   const resultPanelRef = useRef<HTMLDivElement>(null);
-  const accentPanelRef = useRef<HTMLDivElement>(null);
 
   const activeStyles = styles.length > 0 ? styles : STYLES;
   const selectedPurpose = PURPOSES.find((p) => p.id === draft.kind) ?? PURPOSES[0];
   const compatibleLayouts = useMemo(() => getLayoutsForKind(draft.kind, LAYOUTS), [draft.kind]);
 
-  // All 3 visual feel dimensions are strictly optional: empty string ('') means Auto / Follow naturally
   const selectedLayout = draft.layoutId
     ? compatibleLayouts.find((l) => l.id === draft.layoutId) ?? null
     : null;
@@ -172,22 +224,25 @@ export function WorkbenchView({
     }
   }, [lastPrompt]);
 
-  const showTemplateFeedback = (msg: string) => {
-    setTemplateToast(msg);
-    window.setTimeout(() => {
-      setTemplateToast((prev) => (prev === msg ? null : prev));
-    }, 2600);
-  };
-
   const totalCredits = session.creditsGift + session.creditsRedeem + session.creditsPaid;
 
-  const [sceneSwitchHint, setSceneSwitchHint] = useState<string | null>(null);
+  const appendSessionVersion = (entry: Omit<SessionVersion, 'id' | 'label'>) => {
+    setSessionVersions((prev) => {
+      const nextNum = prev.length + 1;
+      const newVer: SessionVersion = {
+        ...entry,
+        id: `v_${Date.now()}_${nextNum}`,
+        label: `v${nextNum}`,
+      };
+      setActiveVersionId(newVer.id);
+      return [...prev, newVer].slice(-6);
+    });
+  };
 
   const handlePurposeChange = (kind: PurposeKind) => {
     const purpose = PURPOSES.find((p) => p.id === kind) ?? PURPOSES[0];
     const nextLayouts = getLayoutsForKind(kind, LAYOUTS);
 
-    // Respect user's intentional optional/auto ('') state when switching scenes
     const nextLayoutId =
       purpose.usesLayout && draft.layoutId ? nextLayouts[0]?.id ?? '' : '';
 
@@ -209,11 +264,10 @@ export function WorkbenchView({
       ratio: purpose.recommendedRatio,
     });
     if (switchedStyleTitle) {
-      setSceneSwitchHint(
-        `已自动匹配适配「${purpose.label}」的画风「${switchedStyleTitle}」，也可点击右侧 × 改为自由发挥`
+      onNotify(
+        `已切换至「${purpose.label}」并自动匹配画风「${switchedStyleTitle}」`,
+        'info'
       );
-    } else {
-      setSceneSwitchHint(null);
     }
     setErrorBanner(null);
   };
@@ -228,24 +282,11 @@ export function WorkbenchView({
       ratio: selectedPurpose.recommendedRatio,
     });
     onRecordRecentStyle(recommendedStyle.id);
-    setSceneSwitchHint(
-      `已按「${selectedPurpose.label}」一键搭配${
+    onNotify(
+      `已按「${selectedPurpose.label}」智能搭配${
         selectedPurpose.usesLayout && nextLayouts[0] ? `「${nextLayouts[0].title}」+ ` : ''
-      }「${recommendedStyle.title}」，配色保持灵活可选`
+      }「${recommendedStyle.title}」`
     );
-  };
-
-  const handleToggleAccent = (colorId: string) => {
-    const exists = draft.accentColorIds.includes(colorId);
-    let next: string[];
-    if (exists) {
-      next = draft.accentColorIds.filter((id) => id !== colorId);
-    } else if (draft.accentColorIds.length >= 2) {
-      next = [draft.accentColorIds[1], colorId];
-    } else {
-      next = [...draft.accentColorIds, colorId];
-    }
-    onChangeDraft({ ...draft, accentColorIds: next });
   };
 
   const handleApplyPreset = (preset: InspirationPreset) => {
@@ -254,6 +295,7 @@ export function WorkbenchView({
     setActiveTemplateId(null);
     setMode('prompt');
     setErrorBanner(null);
+    onNotify(`已填入灵感案例「${preset.title}」`);
   };
 
   const handleOpenSaveCurrentTemplate = () => {
@@ -287,7 +329,7 @@ export function WorkbenchView({
     };
     onSaveTemplate(tpl);
     setActiveTemplateId(tpl.id);
-    showTemplateFeedback(`已将「${preset.title}」存入我的常用模板`);
+    onNotify(`已将「${preset.title}」存入我的常用模板`);
   };
 
   const handleApplyUserTemplate = (tpl: UserTemplate) => {
@@ -298,9 +340,8 @@ export function WorkbenchView({
     if (nextDraft.styleId) {
       onRecordRecentStyle(nextDraft.styleId);
     }
-    setSceneSwitchHint(null);
     setErrorBanner(null);
-    showTemplateFeedback(`已套用模板「${tpl.name}」`);
+    onNotify(`已套用模板「${tpl.name}」`);
   };
 
   const handleUpdateActiveTemplateWithCurrent = () => {
@@ -319,7 +360,7 @@ export function WorkbenchView({
         topicPrefix: activeTemplate.draft.topicPrefix,
       },
     });
-    showTemplateFeedback(`已用当前参数覆盖更新「${activeTemplate.name}」`);
+    onNotify(`已用当前参数覆盖更新「${activeTemplate.name}」`);
   };
 
   const handleSubmitTemplateModal = (e: React.FormEvent) => {
@@ -337,7 +378,7 @@ export function WorkbenchView({
           name: cleanName,
           updatedAt: now,
         });
-        showTemplateFeedback(`模板已重命名为「${cleanName}」`);
+        onNotify(`模板已重命名为「${cleanName}」`);
       }
     } else {
       const snap = templateModal.draftSnapshot;
@@ -363,7 +404,7 @@ export function WorkbenchView({
       };
       onSaveTemplate(newTemplate);
       setActiveTemplateId(newTemplate.id);
-      showTemplateFeedback(`已保存常用模板「${cleanName}」`);
+      onNotify(`已保存常用模板「${cleanName}」`);
     }
     setTemplateModal(null);
   };
@@ -409,6 +450,11 @@ export function WorkbenchView({
         draft: { ...draft, accentColorIds: [...draft.accentColorIds] },
       };
       onPromptGenerated(record);
+      appendSessionVersion({
+        text: data.prompt,
+        format: targetFormat,
+        usedAi: Boolean(data.usedAi),
+      });
       if (draft.styleId) {
         onRecordRecentStyle(draft.styleId);
       }
@@ -429,6 +475,48 @@ export function WorkbenchView({
     e.preventDefault();
     if (mode !== 'prompt') return;
     runPromptGeneration(format, useAiPolish ? 'ai' : 'structured');
+  };
+
+  const handleQuickRefine = (refinementId: PromptRefinementId) => {
+    if (!lastPrompt?.text) return;
+    const option = PROMPT_REFINEMENT_OPTIONS.find((item) => item.id === refinementId);
+    const refined = applyQuickRefinementToPrompt(lastPrompt.text, refinementId, format);
+    if (refined === lastPrompt.text) {
+      onNotify(`当前提示词已包含「${option?.label ?? '该微调'}」要求`, 'info');
+      return;
+    }
+    const record: PromptHistoryRecord = {
+      id: `pr_refine_${Date.now()}`,
+      type: 'prompt',
+      createdAt: new Date().toLocaleString('zh-CN', { hour12: false }),
+      format,
+      usedAi: lastPrompt.usedAi,
+      promptText: refined,
+      draft: { ...draft, accentColorIds: [...draft.accentColorIds] },
+    };
+    onPromptGenerated(record);
+    appendSessionVersion({
+      text: refined,
+      format,
+      usedAi: lastPrompt.usedAi,
+    });
+    setCopied(false);
+    onNotify(`已按「${option?.label ?? '微调'}」生成新版本`);
+  };
+
+  const handleSelectSessionVersion = (ver: SessionVersion) => {
+    setActiveVersionId(ver.id);
+    setFormat(ver.format);
+    onPromptGenerated({
+      id: `edit_ver_${Date.now()}`,
+      type: 'prompt',
+      createdAt: new Date().toLocaleString('zh-CN', { hour12: false }),
+      format: ver.format,
+      usedAi: ver.usedAi,
+      promptText: ver.text,
+      draft: { ...draft, accentColorIds: [...draft.accentColorIds] },
+    });
+    setCopied(false);
   };
 
   const handleSwitchResultFormat = (nextFormat: PromptFormat) => {
@@ -453,6 +541,7 @@ export function WorkbenchView({
     try {
       await navigator.clipboard.writeText(lastPrompt.text);
       setCopied(true);
+      onNotify('提示词已复制到剪贴板');
       window.setTimeout(() => setCopied(false), 2200);
     } catch {
       setErrorBanner({ message: '自动复制受限，请直接全选右侧文本框内容复制。' });
@@ -468,33 +557,31 @@ export function WorkbenchView({
     a.download = `drawnote-prompt-${format}.txt`;
     a.click();
     URL.revokeObjectURL(url);
+    onNotify('已导出 TXT 提示词文件');
   };
 
   return (
-    <div className="mx-auto max-w-[1360px] px-4 py-6 md:px-8">
-      <div className="grid items-start gap-6 lg:grid-cols-12">
-        {/* Left Editor Panel: Sticky Footer on Desktop */}
+    <div className="mx-auto max-w-[1400px] lg:border-x lg:border-[var(--border)]">
+      {/* Edge-to-Edge Split Print Studio Layout */}
+      <div className="grid items-stretch lg:grid-cols-12">
+        {/* Left Editor Rail: Crisp White Print Control Desk */}
         <form
           onSubmit={handleFormSubmit}
-          className="flex flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-white lg:sticky lg:top-20 lg:col-span-5 lg:max-h-[calc(100dvh-104px)]"
+          className="flex flex-col border-b border-[var(--border)] bg-[var(--paper)] lg:sticky lg:top-16 lg:col-span-5 lg:h-[calc(100dvh-64px)] lg:border-b-0 lg:border-r"
         >
-          {/* Fixed Editor Header & Mode Switch */}
-          <div className="shrink-0 border-b border-[var(--border)] px-5 pb-4 pt-5">
+          {/* Fixed Editor Header & Editorial Underline Mode Switch */}
+          <div className="shrink-0 border-b border-[var(--border)] px-5 pt-4 md:px-6">
             <div className="flex items-baseline justify-between gap-2">
-              <div>
-                <p className="text-xs text-[var(--muted)]">画语创作空间</p>
-                <h1 className="mt-0.5 font-editorial text-xl font-semibold text-[var(--ink)]">
-                  把一句话，画成一幅画
-                </h1>
-              </div>
-              <span className="text-xs text-[var(--muted)]">私密创作</span>
+              <h1 className="font-editorial text-lg font-bold text-[var(--ink)] sm:text-xl">
+                把一句话，画成一幅画
+              </h1>
+              <span className="font-tabular text-[11px] text-[var(--muted)]">ATELIER</span>
             </div>
 
-            {/* Mode Segmented Control */}
             <div
               role="group"
               aria-label="生成方式"
-              className="mt-3.5 grid grid-cols-2 gap-1 rounded-xl bg-[var(--light)] p-1"
+              className="mt-3 flex items-center gap-6"
             >
               <button
                 type="button"
@@ -503,10 +590,10 @@ export function WorkbenchView({
                   setMode('prompt');
                   setErrorBanner(null);
                 }}
-                className={`cursor-pointer whitespace-nowrap rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
+                className={`-mb-px cursor-pointer whitespace-nowrap border-b-2 pb-2.5 text-xs font-semibold transition-colors ${
                   mode === 'prompt'
-                    ? 'bg-white text-[var(--ink)] shadow-xs'
-                    : 'text-[var(--muted)] hover:text-[var(--ink)]'
+                    ? 'border-[var(--seal)] text-[var(--seal)]'
+                    : 'border-transparent text-[var(--muted)] hover:text-[var(--ink)]'
                 }`}
               >
                 生成提示词
@@ -518,10 +605,10 @@ export function WorkbenchView({
                   setMode('image');
                   setErrorBanner(null);
                 }}
-                className={`cursor-pointer whitespace-nowrap rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
+                className={`-mb-px cursor-pointer whitespace-nowrap border-b-2 pb-2.5 text-xs font-semibold transition-colors ${
                   mode === 'image'
-                    ? 'bg-white text-[var(--ink)] shadow-xs'
-                    : 'text-[var(--muted)] hover:text-[var(--ink)]'
+                    ? 'border-[var(--seal)] text-[var(--seal)]'
+                    : 'border-transparent text-[var(--muted)] hover:text-[var(--ink)]'
                 }`}
               >
                 生成图片 · 即将开放
@@ -530,10 +617,10 @@ export function WorkbenchView({
           </div>
 
           {/* Scrollable Form Fields */}
-          <div className="subtle-scroll min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">
+          <div className="subtle-scroll min-h-0 flex-1 space-y-3.5 overflow-y-auto px-5 py-3.5 md:px-6">
             {mode === 'image' && (
-              <div className="rounded-xl border border-[#d6e2d5] bg-[#f4f8f2] p-4">
-                <p className="text-sm font-semibold text-[var(--ink)]">
+              <div className="rounded-[4px] border border-[var(--border)] bg-[var(--bg)] p-4">
+                <p className="font-editorial text-sm font-semibold text-[var(--ink)]">
                   站内生图模型即将开放
                 </p>
                 <p className="mt-1 text-xs leading-relaxed text-[var(--ink-soft)]">
@@ -543,10 +630,10 @@ export function WorkbenchView({
                   <button
                     type="button"
                     onClick={onToggleWaitlist}
-                    className={`inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-lg px-3.5 py-2 text-xs font-semibold transition-colors ${
+                    className={`inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-[4px] px-3.5 py-2 text-xs font-semibold transition-colors ${
                       session.waitlistSubscribed
-                        ? 'border border-[var(--green)] bg-white text-[var(--green)]'
-                        : 'bg-[var(--green)] text-white hover:bg-[var(--green-hover)]'
+                        ? 'border border-[var(--seal)] bg-[var(--accent-soft)] text-[var(--seal)]'
+                        : 'bg-[var(--ink)] text-[#fbf9f4] hover:bg-[#2e2e2b]'
                     }`}
                   >
                     {session.waitlistSubscribed ? (
@@ -564,7 +651,7 @@ export function WorkbenchView({
                   <button
                     type="button"
                     onClick={() => setMode('prompt')}
-                    className="cursor-pointer whitespace-nowrap rounded-lg border border-[var(--border)] bg-white px-3.5 py-2 text-xs font-medium text-[var(--ink)] hover:bg-[var(--light)]"
+                    className="cursor-pointer whitespace-nowrap rounded-[4px] border border-[var(--border)] bg-[var(--paper)] px-3.5 py-2 text-xs font-medium text-[var(--ink)] hover:border-[var(--ink)]"
                   >
                     切回生成提示词
                   </button>
@@ -572,14 +659,12 @@ export function WorkbenchView({
               </div>
             )}
 
-            {/* Personal Reusable Templates Strip */}
-            <div className="rounded-xl border border-[var(--border)] bg-[#fafbf8] p-3">
+            {/* 1. Compact Reusable Templates Strip */}
+            <div className="rounded-[4px] border border-[var(--border)] bg-[var(--bg)] px-3 py-2.5">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-1.5">
-                  <Bookmark className="h-3.5 w-3.5 text-[var(--green)]" aria-hidden="true" />
-                  <span className="text-xs font-semibold text-[var(--ink)]">
-                    我的常用模板
-                  </span>
+                  <Bookmark className="h-3.5 w-3.5 text-[var(--seal)]" aria-hidden="true" />
+                  <span className="text-xs font-semibold text-[var(--ink)]">常用模板</span>
                   {templates.length > 0 && (
                     <span className="font-tabular text-[11px] text-[var(--muted)]">
                       ({templates.length})
@@ -592,7 +677,7 @@ export function WorkbenchView({
                     <button
                       type="button"
                       onClick={handleUpdateActiveTemplateWithCurrent}
-                      className="cursor-pointer whitespace-nowrap rounded-md border border-[var(--border)] bg-white px-2 py-1 text-[11px] font-medium text-[var(--ink-soft)] transition-colors hover:border-[var(--green)] hover:text-[var(--green)]"
+                      className="cursor-pointer whitespace-nowrap rounded-[3px] border border-[var(--border)] bg-[var(--paper)] px-2 py-1 text-[11px] font-medium text-[var(--ink-soft)] transition-colors hover:border-[var(--ink)] hover:text-[var(--ink)]"
                     >
                       覆盖更新
                     </button>
@@ -600,24 +685,63 @@ export function WorkbenchView({
                   <button
                     type="button"
                     onClick={handleOpenSaveCurrentTemplate}
-                    className="inline-flex cursor-pointer items-center gap-1 whitespace-nowrap rounded-md border border-[#c5d6c7] bg-white px-2.5 py-1 text-[11px] font-semibold text-[var(--green)] transition-colors hover:border-[var(--green)] hover:bg-[#eef5ef]"
+                    className="inline-flex cursor-pointer items-center gap-1 whitespace-nowrap rounded-[3px] border border-[var(--border)] bg-[var(--paper)] px-2.5 py-1 text-[11px] font-semibold text-[var(--ink)] transition-colors hover:border-[var(--seal)] hover:text-[var(--seal)]"
                   >
                     <BookmarkPlus className="h-3 w-3" aria-hidden="true" />
                     <span>存当前为模板</span>
                   </button>
+                  {sortedTemplates.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setTemplatesExpanded((prev) => !prev)}
+                      aria-expanded={templatesExpanded}
+                      className="inline-flex cursor-pointer items-center gap-0.5 whitespace-nowrap px-1.5 py-1 text-[11px] font-medium text-[var(--muted)] hover:text-[var(--ink)]"
+                    >
+                      <span>{templatesExpanded ? '收起' : '管理'}</span>
+                      {templatesExpanded ? (
+                        <ChevronUp className="h-3 w-3" aria-hidden="true" />
+                      ) : (
+                        <ChevronDown className="h-3 w-3" aria-hidden="true" />
+                      )}
+                    </button>
+                  )}
                 </div>
               </div>
 
-              {templateToast && (
-                <p className="mt-2 rounded-lg bg-[#eef5ef] px-2.5 py-1.5 text-[11px] font-medium text-[var(--green)]">
-                  {templateToast}
-                </p>
-              )}
-
               {sortedTemplates.length === 0 ? (
-                <p className="mt-2 text-[11px] leading-relaxed text-[var(--muted)]">
-                  调好常用场景、画幅、画风或留空偏好后，点右上角「存当前为模板」，下次创作一键复用。
+                <p className="mt-1.5 text-[11px] text-[var(--muted)]">
+                  调好常用场景、画幅或留空偏好后，点右上角保存即可一键复用。
                 </p>
+              ) : !templatesExpanded ? (
+                <div className="subtle-scroll mt-2 flex items-center gap-1.5 overflow-x-auto pb-0.5">
+                  {sortedTemplates.map((tpl) => {
+                    const isActive = tpl.id === activeTemplateId;
+                    return (
+                      <button
+                        key={tpl.id}
+                        type="button"
+                        onClick={() => handleApplyUserTemplate(tpl)}
+                        className={`inline-flex shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap rounded-[3px] border px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                          isActive
+                            ? 'border-[var(--ink)] bg-[var(--ink)] text-[#fbf9f4]'
+                            : 'border-[var(--border)] bg-[var(--paper)] text-[var(--ink)] hover:border-[var(--ink)]'
+                        }`}
+                      >
+                        {tpl.pinned && (
+                          <Pin
+                            className={`h-2.5 w-2.5 shrink-0 ${
+                              isActive
+                                ? 'fill-[#fbf9f4] text-[#fbf9f4]'
+                                : 'fill-[var(--seal)] text-[var(--seal)]'
+                            }`}
+                            aria-hidden="true"
+                          />
+                        )}
+                        <span className="max-w-[140px] truncate">{tpl.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               ) : (
                 <div className="mt-2.5 space-y-1.5">
                   {sortedTemplates.map((tpl) => {
@@ -630,10 +754,10 @@ export function WorkbenchView({
                     return (
                       <div
                         key={tpl.id}
-                        className={`group flex items-center gap-2 rounded-lg border px-2.5 py-2 transition-colors ${
+                        className={`flex items-center gap-2 rounded-[4px] border px-2.5 py-2 transition-colors ${
                           isActive
-                            ? 'border-[var(--green)] bg-white ring-1 ring-[var(--green)]/20'
-                            : 'border-[var(--border)] bg-white hover:border-[#9eb4a3]'
+                            ? 'border-[var(--seal)] bg-[var(--paper)]'
+                            : 'border-[var(--border)] bg-[var(--paper)] hover:border-[#b9b2a4]'
                         }`}
                       >
                         <button
@@ -644,7 +768,7 @@ export function WorkbenchView({
                           <div className="flex items-center gap-1.5">
                             {tpl.pinned && (
                               <Pin
-                                className="h-3 w-3 shrink-0 fill-[var(--green)] text-[var(--green)]"
+                                className="h-3 w-3 shrink-0 fill-[var(--seal)] text-[var(--seal)]"
                                 aria-label="已置顶"
                               />
                             )}
@@ -663,9 +787,9 @@ export function WorkbenchView({
                             onClick={() => onTogglePinTemplate(tpl.id)}
                             title={tpl.pinned ? '取消置顶' : '置顶模板'}
                             aria-label={tpl.pinned ? `取消置顶 ${tpl.name}` : `置顶 ${tpl.name}`}
-                            className={`flex h-6 w-6 cursor-pointer items-center justify-center rounded-md transition-colors ${
+                            className={`flex h-6 w-6 cursor-pointer items-center justify-center rounded-[3px] transition-colors ${
                               tpl.pinned
-                                ? 'text-[var(--green)] hover:bg-[#eef5ef]'
+                                ? 'text-[var(--seal)] hover:bg-[var(--accent-soft)]'
                                 : 'text-[var(--muted)] hover:bg-[var(--light)] hover:text-[var(--ink)]'
                             }`}
                           >
@@ -685,7 +809,7 @@ export function WorkbenchView({
                             }
                             title="重命名模板"
                             aria-label={`重命名 ${tpl.name}`}
-                            className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-[var(--muted)] transition-colors hover:bg-[var(--light)] hover:text-[var(--ink)]"
+                            className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-[3px] text-[var(--muted)] transition-colors hover:bg-[var(--light)] hover:text-[var(--ink)]"
                           >
                             <Pencil className="h-3 w-3" />
                           </button>
@@ -694,11 +818,11 @@ export function WorkbenchView({
                             onClick={() => {
                               onDeleteTemplate(tpl.id);
                               if (activeTemplateId === tpl.id) setActiveTemplateId(null);
-                              showTemplateFeedback(`已删除模板「${tpl.name}」`);
+                              onNotify(`已删除模板「${tpl.name}」`);
                             }}
                             title="删除模板"
                             aria-label={`删除 ${tpl.name}`}
-                            className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-[var(--muted)] transition-colors hover:bg-[#fdf2f0] hover:text-[#b43b2c]"
+                            className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-[3px] text-[var(--muted)] transition-colors hover:bg-[var(--accent-soft)] hover:text-[var(--seal)]"
                           >
                             <Trash2 className="h-3 w-3" />
                           </button>
@@ -710,60 +834,94 @@ export function WorkbenchView({
               )}
             </div>
 
-            {/* Purpose selector */}
-            <div>
-              <label htmlFor="purpose-select" className="mb-1.5 block text-xs font-semibold text-[var(--ink)]">
-                用途场景
-              </label>
-              <select
-                id="purpose-select"
-                value={draft.kind}
-                onChange={(e) => handlePurposeChange(e.target.value as PurposeKind)}
-                className="w-full rounded-xl border border-[var(--border)] bg-white px-3.5 py-2.5 text-sm text-[var(--ink)]"
-              >
-                {PURPOSES.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.label} — {p.shortDesc}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Topic textarea */}
+            {/* 2. Topic Textarea */}
             <div>
               <div className="mb-1.5 flex items-center justify-between">
                 <label htmlFor="topic-input" className="text-xs font-semibold text-[var(--ink)]">
                   想画什么？
                 </label>
                 <span className="font-tabular text-[11px] text-[var(--muted)]">
-                  {draft.topic.length} 字
+                  {draft.topic.length} 字 · ⌘/Ctrl + Enter 生成
                 </span>
               </div>
               <textarea
                 id="topic-input"
-                rows={4}
+                rows={3}
                 value={draft.topic}
                 onChange={(e) => {
                   onChangeDraft({ ...draft, topic: e.target.value });
                   if (errorBanner) setErrorBanner(null);
                 }}
+                onKeyDown={(e) => {
+                  if (
+                    (e.metaKey || e.ctrlKey) &&
+                    e.key === 'Enter' &&
+                    mode === 'prompt' &&
+                    !isGenerating
+                  ) {
+                    e.preventDefault();
+                    runPromptGeneration(format, useAiPolish ? 'ai' : 'structured');
+                  }
+                }}
                 placeholder="描述你的主题、希望表达的内容，或粘贴已有文案…"
-                className="w-full resize-y rounded-xl border border-[var(--border)] bg-white px-3.5 py-2.5 text-sm leading-relaxed text-[var(--ink)] placeholder:text-[#96a39b]"
+                className="w-full resize-y rounded-[4px] border border-[var(--border)] bg-[var(--paper)] px-3.5 py-2.5 text-sm leading-relaxed text-[var(--ink)] placeholder:text-[#9b9991]"
               />
             </div>
 
-            {/* Optional Visual Feel Pickers (Layout / Style / Primary Color — ALL Optional) */}
+            {/* 3. 6-Scene Selector Grid */}
+            <div>
+              <div className="mb-1.5 flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-[var(--ink)]">用途场景</span>
+                <span className="truncate text-[11px] text-[var(--muted)]">
+                  {selectedPurpose.shortDesc}
+                </span>
+              </div>
+              <div
+                role="radiogroup"
+                aria-label="选择用途场景"
+                className="grid grid-cols-3 gap-1.5"
+              >
+                {PURPOSES.map((p) => {
+                  const Icon = SCENE_ICONS[p.id];
+                  const active = draft.kind === p.id;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      onClick={() => handlePurposeChange(p.id)}
+                      className={`flex cursor-pointer items-center gap-2 rounded-[4px] border px-2.5 py-2 text-left transition-colors ${
+                        active
+                          ? 'border-[var(--seal)] bg-[var(--accent-soft)] text-[var(--seal)]'
+                          : 'border-[var(--border)] bg-[var(--paper)] text-[var(--ink-soft)] hover:border-[var(--ink)] hover:text-[var(--ink)]'
+                      }`}
+                    >
+                      <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                      <div className="min-w-0 flex-1">
+                        <span className="block truncate text-xs font-semibold">{p.label}</span>
+                        <span className="font-tabular block text-[10px] opacity-75">
+                          {p.recommendedRatio}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 4. Optional Visual Feel Pickers */}
             <div>
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-baseline gap-1.5">
                   <span className="text-xs font-semibold text-[var(--ink)]">画面感觉</span>
-                  <span className="text-[11px] text-[var(--muted)]">均为可选 · 留空由系统自由发挥</span>
+                  <span className="text-[11px] text-[var(--muted)]">均为可选 · 留空自动发挥</span>
                 </div>
                 <div className="flex items-center gap-2.5">
                   <button
                     type="button"
                     onClick={handleSmartPair}
-                    className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-semibold text-[var(--green)] hover:underline underline-offset-2"
+                    className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-semibold text-[var(--seal)] hover:underline underline-offset-2"
                   >
                     <Wand2 className="h-3 w-3" aria-hidden="true" />
                     <span>智能搭配</span>
@@ -772,7 +930,7 @@ export function WorkbenchView({
                     <button
                       type="button"
                       onClick={onOpenSkillAdmin}
-                      className="cursor-pointer text-[11px] font-medium text-[var(--muted)] hover:text-[var(--green)] hover:underline underline-offset-2"
+                      className="cursor-pointer text-[11px] font-medium text-[var(--muted)] hover:text-[var(--seal)] hover:underline underline-offset-2"
                     >
                       管理 Skill ↗
                     </button>
@@ -780,11 +938,11 @@ export function WorkbenchView({
                 </div>
               </div>
 
-              <div className="space-y-2.5">
-                {/* 1. Layout Slot (Optional) */}
+              <div className="space-y-2">
+                {/* Layout Slot */}
                 {selectedPurpose.usesLayout &&
                   (selectedLayout ? (
-                    <div className="flex items-center gap-2 rounded-xl border border-[var(--border)] bg-white p-2.5 transition-colors hover:border-[var(--green)] hover:bg-[#fafcf9]">
+                    <div className="flex items-center gap-2 rounded-[4px] border border-[var(--border)] bg-[var(--paper)] p-2 transition-colors hover:border-[var(--ink)]">
                       <button
                         type="button"
                         onClick={() => setPickerSlot('layout')}
@@ -792,24 +950,24 @@ export function WorkbenchView({
                       >
                         <LayoutSchematic
                           layout={selectedLayout}
-                          className="h-12 w-12 shrink-0 rounded-lg p-1"
+                          className="h-11 w-11 shrink-0 rounded-[2px] p-0.5"
                         />
                         <div className="min-w-0 flex-1">
                           <span className="block text-[11px] text-[var(--muted)]">
                             版式结构 · 已锁定
                           </span>
-                          <span className="block truncate text-sm font-semibold text-[var(--ink)]">
+                          <span className="block truncate text-xs font-semibold text-[var(--ink)]">
                             {selectedLayout.title}
                           </span>
                         </div>
-                        <span className="shrink-0 text-xs text-[var(--green)]">更换</span>
+                        <span className="shrink-0 text-xs font-medium text-[var(--seal)]">更换</span>
                       </button>
                       <button
                         type="button"
                         onClick={() => onChangeDraft({ ...draft, layoutId: '' })}
                         title="清空版式，改为自由构图"
                         aria-label="清空版式，改为自由构图"
-                        className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-lg text-[var(--muted)] transition-colors hover:bg-[var(--light)] hover:text-[var(--ink)]"
+                        className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-[3px] text-[var(--muted)] transition-colors hover:bg-[var(--light)] hover:text-[var(--ink)]"
                       >
                         <X className="h-3.5 w-3.5" />
                       </button>
@@ -818,9 +976,9 @@ export function WorkbenchView({
                     <button
                       type="button"
                       onClick={() => setPickerSlot('layout')}
-                      className="flex w-full cursor-pointer items-center gap-3 rounded-xl border border-dashed border-[#c7d3c8] bg-[#fafbf8] p-2.5 text-left transition-colors hover:border-[var(--green)] hover:bg-[#f4f8f2]"
+                      className="flex w-full cursor-pointer items-center gap-3 rounded-[4px] border border-dashed border-[#cfc9bc] bg-[var(--bg)] p-2 text-left transition-colors hover:border-[var(--ink)] hover:bg-[var(--paper)]"
                     >
-                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-dashed border-[#cdd7ce] bg-white text-[var(--muted)]">
+                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[2px] border border-dashed border-[#d6d0c3] bg-[var(--paper)] text-[var(--muted)]">
                         <LayoutGrid className="h-4 w-4" aria-hidden="true" />
                       </div>
                       <div className="min-w-0 flex-1">
@@ -828,28 +986,25 @@ export function WorkbenchView({
                           版式结构（可选）
                         </span>
                         <span className="block truncate text-xs font-medium text-[var(--ink-soft)]">
-                          自由构图 · 随文案字数自动排版
+                          自由构图 · 随文案自动留白排版
                         </span>
                       </div>
-                      <span className="shrink-0 text-xs font-medium text-[var(--green)]">指定</span>
+                      <span className="shrink-0 text-xs font-medium text-[var(--seal)]">指定</span>
                     </button>
                   ))}
 
-                {sceneSwitchHint && (
-                  <p className="rounded-lg border border-[#d6e2d5] bg-[#f4f8f2] px-3 py-2 text-[11px] leading-relaxed text-[var(--green)]">
-                    {sceneSwitchHint}
-                  </p>
-                )}
-
-                {/* 2. Style Slot (Optional) */}
+                {/* Style Slot */}
                 {selectedStyle ? (
-                  <div className="flex items-center gap-2 rounded-xl border border-[var(--border)] bg-white p-2.5 transition-colors hover:border-[var(--green)] hover:bg-[#fafcf9]">
+                  <div className="flex items-center gap-2 rounded-[4px] border border-[var(--border)] bg-[var(--paper)] p-2 transition-colors hover:border-[var(--ink)]">
                     <button
                       type="button"
                       onClick={() => setPickerSlot('style')}
                       className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left"
                     >
-                      <StyleArtwork style={selectedStyle} className="h-12 w-12 shrink-0 rounded-lg" />
+                      <StyleArtwork
+                        style={selectedStyle}
+                        className="h-11 w-11 shrink-0 rounded-[2px]"
+                      />
                       <div className="min-w-0 flex-1">
                         <span className="block text-[11px] text-[var(--muted)]">
                           画风材质 · {selectedStyle.id}
@@ -857,21 +1012,18 @@ export function WorkbenchView({
                             ? ` · 适配${selectedPurpose.label}`
                             : ' · 跨场景自选'}
                         </span>
-                        <span className="block truncate text-sm font-semibold text-[var(--ink)]">
+                        <span className="block truncate text-xs font-semibold text-[var(--ink)]">
                           {selectedStyle.title}
                         </span>
                       </div>
-                      <span className="shrink-0 text-xs text-[var(--green)]">更换</span>
+                      <span className="shrink-0 text-xs font-medium text-[var(--seal)]">更换</span>
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
-                        onChangeDraft({ ...draft, styleId: '' });
-                        setSceneSwitchHint(null);
-                      }}
+                      onClick={() => onChangeDraft({ ...draft, styleId: '' })}
                       title="清空画风，改为自由发挥"
                       aria-label="清空画风，改为自由发挥"
-                      className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-lg text-[var(--muted)] transition-colors hover:bg-[var(--light)] hover:text-[var(--ink)]"
+                      className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-[3px] text-[var(--muted)] transition-colors hover:bg-[var(--light)] hover:text-[var(--ink)]"
                     >
                       <X className="h-3.5 w-3.5" />
                     </button>
@@ -880,9 +1032,9 @@ export function WorkbenchView({
                   <button
                     type="button"
                     onClick={() => setPickerSlot('style')}
-                    className="flex w-full cursor-pointer items-center gap-3 rounded-xl border border-dashed border-[#c7d3c8] bg-[#fafbf8] p-2.5 text-left transition-colors hover:border-[var(--green)] hover:bg-[#f4f8f2]"
+                    className="flex w-full cursor-pointer items-center gap-3 rounded-[4px] border border-dashed border-[#cfc9bc] bg-[var(--bg)] p-2 text-left transition-colors hover:border-[var(--ink)] hover:bg-[var(--paper)]"
                   >
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-dashed border-[#cdd7ce] bg-white text-[var(--muted)]">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[2px] border border-dashed border-[#d6d0c3] bg-[var(--paper)] text-[var(--muted)]">
                       <Sparkles className="h-4 w-4" aria-hidden="true" />
                     </div>
                     <div className="min-w-0 flex-1">
@@ -893,27 +1045,27 @@ export function WorkbenchView({
                         自由发挥 · 顺应主题意境自然呈现
                       </span>
                     </div>
-                    <span className="shrink-0 text-xs font-medium text-[var(--green)]">指定</span>
+                    <span className="shrink-0 text-xs font-medium text-[var(--seal)]">指定</span>
                   </button>
                 )}
 
-                {/* 3. Color Slot (Optional — Defaults to Auto / Follow Style Natural Palette) */}
-                {selectedPrimaryColor ? (
-                  <div className="flex items-center gap-2 rounded-xl border border-[var(--border)] bg-white p-2.5 transition-colors hover:border-[var(--green)] hover:bg-[#fafcf9]">
+                {/* Unified Color Slot */}
+                {selectedPrimaryColor || selectedAccentColors.length > 0 ? (
+                  <div className="flex items-center gap-2 rounded-[4px] border border-[var(--border)] bg-[var(--paper)] p-2 transition-colors hover:border-[var(--ink)]">
                     <button
                       type="button"
                       onClick={() => setPickerSlot('color')}
                       className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left"
                     >
                       <div
-                        className="flex h-12 w-12 shrink-0 flex-col overflow-hidden rounded-lg border border-black/10"
+                        className="flex h-11 w-11 shrink-0 flex-col overflow-hidden rounded-[2px] border border-black/10"
                         aria-hidden="true"
                       >
                         <span
                           className="w-full flex-1"
-                          style={{ backgroundColor: selectedPrimaryColor.hex }}
+                          style={{ backgroundColor: selectedPrimaryColor?.hex ?? '#F4F1EA' }}
                         />
-                        <div className="flex h-3.5 w-full">
+                        <div className="flex h-3 w-full">
                           {selectedAccentColors.length > 0 ? (
                             selectedAccentColors.map((ac) => (
                               <span
@@ -925,7 +1077,9 @@ export function WorkbenchView({
                           ) : (
                             <span
                               className="flex-1"
-                              style={{ backgroundColor: selectedPrimaryColor.secondaryHex }}
+                              style={{
+                                backgroundColor: selectedPrimaryColor?.secondaryHex ?? '#E5E0D5',
+                              }}
                             />
                           )}
                         </div>
@@ -933,23 +1087,25 @@ export function WorkbenchView({
 
                       <div className="min-w-0 flex-1">
                         <span className="block text-[11px] text-[var(--muted)]">
-                          色彩搭配 · 已锁定主色
+                          色彩搭配 · 主色与点缀色
                         </span>
-                        <span className="block truncate text-sm font-semibold text-[var(--ink)]">
-                          {selectedPrimaryColor.name}
+                        <span className="block truncate text-xs font-semibold text-[var(--ink)]">
+                          {selectedPrimaryColor ? selectedPrimaryColor.name : '跟随画风原色'}
                           {selectedAccentColors.length > 0
                             ? ` + ${selectedAccentColors.map((c) => c.name).join(' / ')}`
                             : ''}
                         </span>
                       </div>
-                      <span className="shrink-0 text-xs text-[var(--green)]">更换</span>
+                      <span className="shrink-0 text-xs font-medium text-[var(--seal)]">搭配</span>
                     </button>
                     <button
                       type="button"
-                      onClick={() => onChangeDraft({ ...draft, primaryColorId: '' })}
-                      title="清空主色，跟随画风原色"
-                      aria-label="清空主色，跟随画风原色"
-                      className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-lg text-[var(--muted)] transition-colors hover:bg-[var(--light)] hover:text-[var(--ink)]"
+                      onClick={() =>
+                        onChangeDraft({ ...draft, primaryColorId: '', accentColorIds: [] })
+                      }
+                      title="清空主色与点缀色，跟随画风原色"
+                      aria-label="清空主色与点缀色，跟随画风原色"
+                      className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-[3px] text-[var(--muted)] transition-colors hover:bg-[var(--light)] hover:text-[var(--ink)]"
                     >
                       <X className="h-3.5 w-3.5" />
                     </button>
@@ -958,143 +1114,87 @@ export function WorkbenchView({
                   <button
                     type="button"
                     onClick={() => setPickerSlot('color')}
-                    className="flex w-full cursor-pointer items-center gap-3 rounded-xl border border-dashed border-[#c7d3c8] bg-[#fafbf8] p-2.5 text-left transition-colors hover:border-[var(--green)] hover:bg-[#f4f8f2]"
+                    className="flex w-full cursor-pointer items-center gap-3 rounded-[4px] border border-dashed border-[#cfc9bc] bg-[var(--bg)] p-2 text-left transition-colors hover:border-[var(--ink)] hover:bg-[var(--paper)]"
                   >
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-dashed border-[#cdd7ce] bg-white text-[var(--muted)]">
-                      {selectedAccentColors.length > 0 ? (
-                        <div className="flex h-7 w-7 overflow-hidden rounded-full border border-black/10">
-                          {selectedAccentColors.map((ac) => (
-                            <span
-                              key={ac.id}
-                              className="flex-1"
-                              style={{ backgroundColor: ac.hex }}
-                            />
-                          ))}
-                        </div>
-                      ) : (
-                        <Palette className="h-4 w-4" aria-hidden="true" />
-                      )}
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[2px] border border-dashed border-[#d6d0c3] bg-[var(--paper)] text-[var(--muted)]">
+                      <Palette className="h-4 w-4" aria-hidden="true" />
                     </div>
                     <div className="min-w-0 flex-1">
                       <span className="block text-[11px] text-[var(--muted)]">
-                        色彩搭配（可选）
+                        色彩搭配（可选 · 同屏配主色与点缀色）
                       </span>
                       <span className="block truncate text-xs font-medium text-[var(--ink-soft)]">
-                        {selectedAccentColors.length > 0
-                          ? `跟随画风原色 + 点缀 ${selectedAccentColors.map((c) => c.name).join(' / ')}`
-                          : '跟随画风原色（不强行偏色）'}
+                        跟随画风原色（不强行偏色）
                       </span>
                     </div>
-                    <span className="shrink-0 text-xs font-medium text-[var(--green)]">指定</span>
+                    <span className="shrink-0 text-xs font-medium text-[var(--seal)]">搭配</span>
                   </button>
-                )}
-              </div>
-
-              {/* Visual HEX Swatch Grid for Accent Colors */}
-              <div className="mt-3">
-                <div className="flex items-center justify-between gap-2">
-                  <button
-                    type="button"
-                    aria-expanded={accentExpanded}
-                    onClick={() => {
-                      setAccentExpanded((prev) => {
-                        const next = !prev;
-                        if (next) {
-                          window.requestAnimationFrame(() => {
-                            accentPanelRef.current?.scrollIntoView({
-                              behavior: 'smooth',
-                              block: 'nearest',
-                            });
-                          });
-                        }
-                        return next;
-                      });
-                    }}
-                    className="inline-flex cursor-pointer items-center gap-1.5 text-xs font-medium text-[var(--ink-soft)] hover:text-[var(--green)]"
-                  >
-                    <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
-                    <span>
-                      点缀色色板（可选，最多 2 种 · 已选 {draft.accentColorIds.length} 种）
-                    </span>
-                  </button>
-                  {draft.accentColorIds.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => onChangeDraft({ ...draft, accentColorIds: [] })}
-                      className="cursor-pointer text-[11px] text-[var(--muted)] hover:text-[var(--ink)]"
-                    >
-                      清空点缀色
-                    </button>
-                  )}
-                </div>
-
-                {accentExpanded && (
-                  <div
-                    ref={accentPanelRef}
-                    className="mt-2.5 rounded-xl border border-[var(--border)] bg-[#fafbf8] p-3"
-                  >
-                    <div className="flex flex-wrap gap-2">
-                      {COLOR_PALETTES.map((c) => {
-                        const active = draft.accentColorIds.includes(c.id);
-                        return (
-                          <button
-                            key={c.id}
-                            type="button"
-                            onClick={() => handleToggleAccent(c.id)}
-                            title={`${c.name} (${c.hex})`}
-                            aria-pressed={active}
-                            aria-label={`点缀色 ${c.name}`}
-                            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] transition-colors ${
-                              active
-                                ? 'border-[var(--green)] bg-white font-semibold text-[var(--ink)] ring-1 ring-[var(--green)]'
-                                : 'border-[var(--border)] bg-white/80 text-[var(--ink-soft)] hover:border-[#9eb4a3]'
-                            }`}
-                          >
-                            <span
-                              className="h-3 w-3 shrink-0 rounded-full border border-black/15"
-                              style={{ backgroundColor: c.hex }}
-                            />
-                            <span>{c.name}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
                 )}
               </div>
             </div>
 
-            {/* Aspect Ratio & Prompt Polish Engine Option */}
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {/* 5. Aspect Ratio Picker + Engine Toggle */}
+            <div className="space-y-3">
               <div>
-                <label htmlFor="ratio-select" className="mb-1.5 block text-xs font-semibold text-[var(--ink)]">
-                  画幅比例
-                </label>
-                <select
-                  id="ratio-select"
-                  value={draft.ratio}
-                  onChange={(e) => onChangeDraft({ ...draft, ratio: e.target.value })}
-                  className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-xs text-[var(--ink)]"
+                <div className="mb-1.5 flex items-center justify-between">
+                  <span className="text-xs font-semibold text-[var(--ink)]">画幅比例</span>
+                  <span className="text-[11px] text-[var(--muted)]">
+                    {ASPECT_RATIOS.find((r) => r.value === draft.ratio)?.label ?? draft.ratio}
+                  </span>
+                </div>
+                <div
+                  role="radiogroup"
+                  aria-label="选择画幅比例"
+                  className="grid grid-cols-4 gap-1.5 sm:grid-cols-7"
                 >
-                  {ASPECT_RATIOS.map((r) => (
-                    <option key={r.value} value={r.value}>
-                      {r.label}
-                    </option>
-                  ))}
-                </select>
+                  {ASPECT_RATIOS.map((r) => {
+                    const active = draft.ratio === r.value;
+                    const box = getTinyRatioDims(r.value);
+                    return (
+                      <button
+                        key={r.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        aria-label={`画幅 ${r.label}`}
+                        onClick={() => onChangeDraft({ ...draft, ratio: r.value })}
+                        className={`flex cursor-pointer flex-col items-center justify-center gap-1 rounded-[4px] border py-1.5 transition-colors ${
+                          active
+                            ? 'border-[var(--seal)] bg-[var(--accent-soft)] text-[var(--seal)]'
+                            : 'border-[var(--border)] bg-[var(--paper)] text-[var(--ink-soft)] hover:border-[var(--ink)]'
+                        }`}
+                      >
+                        <span
+                          className="flex h-5 items-center justify-center"
+                          aria-hidden="true"
+                        >
+                          <span
+                            className={`border ${
+                              active
+                                ? 'border-[var(--seal)] bg-[var(--seal)]/15'
+                                : 'border-[#9b9991] bg-[var(--bg)]'
+                            }`}
+                            style={{ width: `${box.w}px`, height: `${box.h}px` }}
+                          />
+                        </span>
+                        <span className="font-tabular text-[10px] font-semibold leading-none">
+                          {r.value}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
-              <div>
-                <span className="mb-1.5 block text-xs font-semibold text-[var(--ink)]">
-                  生成引擎
-                </span>
-                <div className="grid grid-cols-2 gap-1 rounded-xl border border-[var(--border)] bg-[#fafbf8] p-1">
+              <div className="flex items-center justify-between gap-3 rounded-[4px] border border-[var(--border)] bg-[var(--bg)] px-3 py-2">
+                <span className="text-xs font-medium text-[var(--ink-soft)]">生成引擎</span>
+                <div className="inline-flex gap-1 rounded-[3px] border border-[var(--border)] bg-[var(--paper)] p-0.5">
                   <button
                     type="button"
                     onClick={() => setUseAiPolish(true)}
-                    className={`cursor-pointer whitespace-nowrap rounded-lg px-2 py-1.5 text-[11px] font-semibold transition-colors ${
+                    className={`cursor-pointer whitespace-nowrap rounded-[2px] px-3 py-1 text-[11px] font-semibold transition-colors ${
                       useAiPolish
-                        ? 'bg-white text-[var(--green)] shadow-xs'
+                        ? 'bg-[var(--ink)] text-[#fbf9f4]'
                         : 'text-[var(--muted)] hover:text-[var(--ink)]'
                     }`}
                   >
@@ -1103,9 +1203,9 @@ export function WorkbenchView({
                   <button
                     type="button"
                     onClick={() => setUseAiPolish(false)}
-                    className={`cursor-pointer whitespace-nowrap rounded-lg px-2 py-1.5 text-[11px] font-semibold transition-colors ${
+                    className={`cursor-pointer whitespace-nowrap rounded-[2px] px-3 py-1 text-[11px] font-semibold transition-colors ${
                       !useAiPolish
-                        ? 'bg-white text-[var(--green)] shadow-xs'
+                        ? 'bg-[var(--ink)] text-[#fbf9f4]'
                         : 'text-[var(--muted)] hover:text-[var(--ink)]'
                     }`}
                   >
@@ -1117,11 +1217,11 @@ export function WorkbenchView({
           </div>
 
           {/* Sticky Footer Action Bar */}
-          <div className="shrink-0 border-t border-[var(--border)] bg-[#fafbf8] px-5 py-3.5">
+          <div className="shrink-0 border-t border-[var(--border)] bg-[var(--bg)] px-5 py-3.5 md:px-6">
             {errorBanner && (
               <div
                 role="alert"
-                className="mb-3 rounded-xl border border-[#e7c3be] bg-[#fdf4f3] px-3 py-2 text-xs text-[#9e3124]"
+                className="mb-3 rounded-[4px] border border-[var(--seal)]/30 bg-[var(--accent-soft)] px-3 py-2 text-xs text-[var(--seal)]"
               >
                 <p>{errorBanner.message}</p>
                 {errorBanner.canFallback && (
@@ -1131,7 +1231,7 @@ export function WorkbenchView({
                       setUseAiPolish(false);
                       runPromptGeneration(format, 'structured');
                     }}
-                    className="mt-1.5 cursor-pointer font-semibold text-[var(--green)] underline underline-offset-2"
+                    className="mt-1.5 cursor-pointer font-semibold text-[var(--ink)] underline underline-offset-2"
                   >
                     改用极速结构化模板立即生成
                   </button>
@@ -1139,7 +1239,6 @@ export function WorkbenchView({
               </div>
             )}
 
-            {/* Live Condition Summary */}
             <p
               title={conditionSummary}
               className="mb-2 truncate text-[11px] font-medium text-[var(--ink-soft)]"
@@ -1151,7 +1250,7 @@ export function WorkbenchView({
               <button
                 type="submit"
                 disabled={isGenerating}
-                className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-[var(--green)] px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-[var(--green-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+                className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-[4px] bg-[var(--ink)] px-5 py-3 text-sm font-semibold text-[#fbf9f4] transition-colors hover:bg-[#2e2e2b] disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {isGenerating ? (
                   <>
@@ -1169,7 +1268,7 @@ export function WorkbenchView({
               <button
                 type="button"
                 onClick={() => setMode('prompt')}
-                className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-[var(--green)] bg-white px-5 py-3 text-sm font-semibold text-[var(--green)] transition-colors hover:bg-[var(--light)]"
+                className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-[4px] border border-[var(--ink)] bg-[var(--paper)] px-5 py-3 text-sm font-semibold text-[var(--ink)] transition-colors hover:bg-[var(--light)]"
               >
                 <span>生图暂未开放 · 切换生成提示词</span>
                 <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
@@ -1178,61 +1277,100 @@ export function WorkbenchView({
           </div>
         </form>
 
-        {/* Right Output Panel */}
+        {/* Right Output Canvas: Washi Grid Editorial Drafting Table */}
         <section
           ref={resultPanelRef}
           aria-label="创作结果"
-          className="scroll-mt-20 flex min-h-[540px] flex-col rounded-2xl border border-[var(--border)] bg-[var(--surface-alt)] p-5 sm:p-6 lg:col-span-7 lg:min-h-[calc(100dvh-104px)]"
+          className="atelier-grid scroll-mt-16 flex min-h-[540px] flex-col p-5 sm:p-7 lg:col-span-7 lg:min-h-[calc(100dvh-64px)]"
         >
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#dde3d8] pb-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] pb-4">
             <div>
-              <h2 className="text-sm font-semibold text-[var(--ink)]">创作结果</h2>
+              <h2 className="font-editorial text-base font-bold text-[var(--ink)]">
+                创作画案与提示词稿
+              </h2>
               <p className="mt-0.5 text-xs text-[var(--muted)]">
                 {lastPrompt
                   ? lastPrompt.usedAi
-                    ? '已完成 AI 画面润色 · 可自由切换多平台格式或直接编辑'
-                    : '已按结构化视觉规则生成 · 零冗余元指令'
-                  : '只写一句主题即可生成，也可按需锁定版式、画风或配色'}
+                    ? '已完成 AI 画面润色 · 支持一键快捷微调与版本对比'
+                    : '已按结构化视觉规则生成 · 支持一键微调与多平台格式切换'
+                  : '左侧调参时下方实时联动配方，写下一句话即可生成专业提示词'}
               </p>
             </div>
             <button
               type="button"
               onClick={onOpenTasks}
-              className="inline-flex cursor-pointer items-center gap-1 whitespace-nowrap text-xs font-medium text-[var(--green)] hover:underline underline-offset-4"
+              className="inline-flex cursor-pointer items-center gap-1 whitespace-nowrap text-xs font-medium text-[var(--ink)] hover:text-[var(--seal)] hover:underline underline-offset-4"
             >
-              <span>任务记录</span>
+              <span>全部任务记录</span>
               <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
             </button>
           </div>
 
-          {!lastPrompt ? (
-            /* Productive Empty State with 3 One-Tap Inspiration Templates */
-            <div className="flex flex-1 flex-col justify-center py-8">
+          {/* Live Synced Visual Recipe Moodboard */}
+          <div className="mt-4">
+            <RecipeMoodboard
+              purpose={selectedPurpose}
+              ratio={draft.ratio}
+              layout={selectedLayout}
+              style={selectedStyle}
+              primaryColor={selectedPrimaryColor}
+              accentColors={selectedAccentColors}
+              compact={Boolean(lastPrompt)}
+              onOpenPicker={(slot) => setPickerSlot(slot)}
+            />
+          </div>
+
+          {isGenerating ? (
+            <div
+              aria-label="正在生成提示词"
+              className="mt-4 flex flex-1 flex-col justify-between rounded-[4px] border border-[var(--border)] bg-[var(--paper)] p-5"
+            >
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 text-xs font-medium text-[var(--seal)]">
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                  <span>正在为你融合场景构图、画风笔触与光影细节…</span>
+                </div>
+                <div className="space-y-2.5 pt-2">
+                  <div className="animate-paper-breathe h-3.5 w-4/5 rounded-[2px] bg-[#ebe6dc]" />
+                  <div className="animate-paper-breathe h-3.5 w-full rounded-[2px] bg-[#ebe6dc]" />
+                  <div className="animate-paper-breathe h-3.5 w-11/12 rounded-[2px] bg-[#ebe6dc]" />
+                </div>
+                <div className="space-y-2.5 pt-2">
+                  <div className="animate-paper-breathe h-3.5 w-3/4 rounded-[2px] bg-[#ebe6dc]" />
+                  <div className="animate-paper-breathe h-3.5 w-full rounded-[2px] bg-[#ebe6dc]" />
+                  <div className="animate-paper-breathe h-3.5 w-2/3 rounded-[2px] bg-[#ebe6dc]" />
+                </div>
+              </div>
+              <p className="pt-4 text-[11px] text-[var(--muted)]">
+                完成后将自动写入本轮版本对比记录
+              </p>
+            </div>
+          ) : !lastPrompt ? (
+            <div className="flex flex-1 flex-col justify-center py-7">
               <div className="mx-auto max-w-lg text-center">
-                <Sparkles className="mx-auto h-7 w-7 text-[var(--green)]/70" aria-hidden="true" />
-                <h3 className="mt-3 font-editorial text-xl font-semibold text-[var(--ink)]">
+                <h3 className="font-editorial text-xl font-bold text-[var(--ink)]">
                   从一句话开始，或直接试试精选案例
                 </h3>
-                <p className="mt-2 text-sm text-[var(--muted)] text-balance">
-                  点击下方任一案例可一键填入画布，也可顺手收藏为你的个人常用模板。
+                <p className="mt-1.5 text-sm text-[var(--muted)] text-balance">
+                  点击下方任一案例可一键填入画案并同步上方配方，也可顺手存为个人常用模板。
                 </p>
               </div>
 
-              <div className="mt-7 grid gap-3 sm:grid-cols-3">
+              <div className="mt-6 grid gap-3.5 sm:grid-cols-3">
                 {INSPIRATION_PRESETS.map((preset) => (
                   <div
                     key={preset.id}
-                    className="group flex flex-col justify-between rounded-xl border border-[var(--border)] bg-white p-4 text-left transition-colors hover:border-[var(--green)] hover:bg-[#fcfdfb]"
+                    className="group flex flex-col justify-between rounded-[4px] border border-[var(--border)] bg-[var(--paper)] p-4 text-left transition-colors hover:border-[var(--ink)]"
                   >
                     <button
                       type="button"
                       onClick={() => handleApplyPreset(preset)}
                       className="flex-1 cursor-pointer text-left"
                     >
-                      <span className="text-[11px] font-medium text-[var(--green)]">
+                      <span className="font-tabular text-[11px] font-semibold text-[var(--seal)]">
                         {preset.purposeLabel}
                       </span>
-                      <h4 className="mt-1.5 text-sm font-semibold text-[var(--ink)]">
+                      <h4 className="mt-1.5 font-editorial text-sm font-bold text-[var(--ink)]">
                         {preset.title}
                       </h4>
                       <p className="mt-1 text-xs leading-relaxed text-[var(--muted)]">
@@ -1240,11 +1378,11 @@ export function WorkbenchView({
                       </p>
                     </button>
 
-                    <div className="mt-4 flex items-center justify-between gap-2 border-t border-[#f0efe8] pt-3">
+                    <div className="mt-4 flex items-center justify-between gap-2 border-t border-[var(--border)] pt-3">
                       <button
                         type="button"
                         onClick={() => handleApplyPreset(preset)}
-                        className="inline-flex cursor-pointer items-center gap-1 text-xs font-semibold text-[var(--green)] hover:underline underline-offset-2"
+                        className="inline-flex cursor-pointer items-center gap-1 text-xs font-semibold text-[var(--ink)] hover:text-[var(--seal)] hover:underline underline-offset-2"
                       >
                         <span>一键填入</span>
                         <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
@@ -1252,7 +1390,7 @@ export function WorkbenchView({
                       <button
                         type="button"
                         onClick={() => handleSavePresetAsTemplate(preset)}
-                        className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-[var(--muted)] hover:text-[var(--green)]"
+                        className="inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium text-[var(--muted)] hover:text-[var(--seal)]"
                       >
                         <BookmarkPlus className="h-3 w-3" aria-hidden="true" />
                         <span>存为模板</span>
@@ -1263,13 +1401,13 @@ export function WorkbenchView({
               </div>
             </div>
           ) : (
-            /* Populated Prompt Result with 3-Platform Format Switcher */
             <div className="mt-4 flex flex-1 flex-col">
+              {/* Format Switcher + Session Version Tabs */}
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div
                   role="tablist"
                   aria-label="目标工具提示词格式"
-                  className="inline-flex flex-wrap gap-1 rounded-xl bg-[#e5ebe0] p-1"
+                  className="inline-flex flex-wrap gap-1 rounded-[4px] border border-[var(--border)] bg-[var(--paper)] p-0.5"
                 >
                   {FORMAT_OPTIONS.map((opt) => (
                     <button
@@ -1278,9 +1416,9 @@ export function WorkbenchView({
                       role="tab"
                       aria-selected={format === opt.id}
                       onClick={() => handleSwitchResultFormat(opt.id)}
-                      className={`cursor-pointer whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                      className={`cursor-pointer whitespace-nowrap rounded-[3px] px-3 py-1.5 text-xs font-semibold transition-colors ${
                         format === opt.id
-                          ? 'bg-white text-[var(--ink)] shadow-xs'
+                          ? 'bg-[var(--ink)] text-[#fbf9f4]'
                           : 'text-[var(--ink-soft)] hover:text-[var(--ink)]'
                       }`}
                     >
@@ -1288,9 +1426,50 @@ export function WorkbenchView({
                     </button>
                   ))}
                 </div>
-                <span className="text-xs text-[var(--muted)]">
-                  {FORMAT_OPTIONS.find((o) => o.id === format)?.hint}
-                </span>
+
+                {sessionVersions.length > 0 && (
+                  <div
+                    role="tablist"
+                    aria-label="本轮提示词版本对比"
+                    className="inline-flex items-center gap-1"
+                  >
+                    <span className="mr-1 text-[11px] text-[var(--muted)]">本轮版本</span>
+                    {sessionVersions.map((ver) => {
+                      const active = ver.id === activeVersionId;
+                      return (
+                        <button
+                          key={ver.id}
+                          type="button"
+                          role="tab"
+                          aria-selected={active}
+                          onClick={() => handleSelectSessionVersion(ver)}
+                          className={`font-tabular cursor-pointer rounded-[3px] px-2 py-1 text-[11px] font-semibold transition-colors ${
+                            active
+                              ? 'bg-[var(--seal)] text-white'
+                              : 'border border-[var(--border)] bg-[var(--paper)] text-[var(--ink-soft)] hover:border-[var(--ink)]'
+                          }`}
+                        >
+                          {ver.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Quick Visual Refinement Strip */}
+              <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] font-medium text-[var(--muted)]">快捷微调：</span>
+                {PROMPT_REFINEMENT_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => handleQuickRefine(opt.id)}
+                    className="cursor-pointer whitespace-nowrap rounded-[3px] border border-[var(--border)] bg-[var(--paper)] px-2.5 py-1 text-[11px] font-medium text-[var(--ink-soft)] transition-colors hover:border-[var(--seal)] hover:bg-[var(--accent-soft)] hover:text-[var(--seal)]"
+                  >
+                    + {opt.label}
+                  </button>
+                ))}
               </div>
 
               <label htmlFor="prompt-output" className="sr-only">
@@ -1310,32 +1489,43 @@ export function WorkbenchView({
                     draft,
                   })
                 }
-                rows={13}
-                className="subtle-scroll mt-3 w-full flex-1 rounded-xl border border-[var(--border)] bg-white p-4 text-sm leading-7 text-[var(--ink)]"
+                rows={11}
+                className="subtle-scroll mt-3 w-full flex-1 rounded-[4px] border border-[var(--border)] bg-[var(--paper)] p-4 text-sm leading-7 text-[var(--ink)]"
               />
 
               {/* Grouped Bottom Action Bar */}
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
-                  <span>本次消耗 0 次</span>
+                  <span>{FORMAT_OPTIONS.find((o) => o.id === format)?.hint}</span>
                   <span aria-hidden="true">·</span>
-                  <span>已自动保存至任务记录</span>
+                  <span>消耗 0 次</span>
                 </div>
 
-                <div className="flex items-center gap-2.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleOpenSaveCurrentTemplate}
+                    className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-[4px] border border-[var(--border)] bg-[var(--paper)] px-3 py-2 text-xs font-medium text-[var(--ink)] hover:border-[var(--ink)]"
+                  >
+                    <BookmarkPlus className="h-3.5 w-3.5 text-[var(--seal)]" aria-hidden="true" />
+                    <span>存为模板</span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => runPromptGeneration(format, useAiPolish ? 'ai' : 'structured')}
                     disabled={isGenerating}
-                    className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-lg border border-[var(--border)] bg-white px-3.5 py-2 text-xs font-medium text-[var(--ink)] hover:bg-[var(--light)] disabled:opacity-50"
+                    className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-[4px] border border-[var(--border)] bg-[var(--paper)] px-3 py-2 text-xs font-medium text-[var(--ink)] hover:border-[var(--ink)] disabled:opacity-50"
                   >
-                    <RefreshCw className={`h-3.5 w-3.5 ${isGenerating ? 'animate-spin' : ''}`} aria-hidden="true" />
+                    <RefreshCw
+                      className={`h-3.5 w-3.5 ${isGenerating ? 'animate-spin' : ''}`}
+                      aria-hidden="true"
+                    />
                     <span>重新生成</span>
                   </button>
                   <button
                     type="button"
                     onClick={handleExportTxt}
-                    className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-lg border border-[var(--border)] bg-white px-3.5 py-2 text-xs font-medium text-[var(--ink)] hover:bg-[var(--light)]"
+                    className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-[4px] border border-[var(--border)] bg-[var(--paper)] px-3 py-2 text-xs font-medium text-[var(--ink)] hover:border-[var(--ink)]"
                   >
                     <Download className="h-3.5 w-3.5" aria-hidden="true" />
                     <span>导出 TXT</span>
@@ -1343,7 +1533,7 @@ export function WorkbenchView({
                   <button
                     type="button"
                     onClick={handleCopyPrompt}
-                    className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-lg bg-[var(--green)] px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-[var(--green-hover)]"
+                    className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-[4px] bg-[var(--ink)] px-4 py-2 text-xs font-semibold text-[#fbf9f4] transition-colors hover:bg-[var(--seal)]"
                   >
                     {copied ? (
                       <>
@@ -1376,6 +1566,7 @@ export function WorkbenchView({
             ? draft.styleId
             : draft.primaryColorId
         }
+        selectedAccentIds={draft.accentColorIds}
         favoriteStyleIds={favoriteStyleIds}
         recentStyleIds={recentStyleIds}
         onToggleFavoriteStyle={onToggleFavoriteStyle}
@@ -1385,10 +1576,21 @@ export function WorkbenchView({
           } else if (slot === 'style') {
             onChangeDraft({ ...draft, styleId: id });
             if (id) onRecordRecentStyle(id);
-            setSceneSwitchHint(null);
           } else if (slot === 'color') {
             onChangeDraft({ ...draft, primaryColorId: id });
           }
+        }}
+        onApplyColorHarmony={(primaryId, accentIds) => {
+          onChangeDraft({
+            ...draft,
+            primaryColorId: primaryId,
+            accentColorIds: accentIds,
+          });
+          onNotify(
+            primaryId || accentIds.length > 0
+              ? '已更新色彩配方搭配'
+              : '已设为跟随画风原色'
+          );
         }}
         onClose={() => setPickerSlot(null)}
       />
@@ -1399,18 +1601,18 @@ export function WorkbenchView({
           role="dialog"
           aria-modal="true"
           aria-labelledby="template-modal-heading"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-[#183628]/45 p-4 backdrop-blur-xs"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[#171716]/55 p-4 backdrop-blur-xs"
           onClick={() => setTemplateModal(null)}
         >
           <form
             onSubmit={handleSubmitTemplateModal}
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md rounded-2xl border border-[var(--border)] bg-white p-6 shadow-2xl"
+            className="animate-modal-in w-full max-w-md rounded-[6px] border border-[var(--border)] bg-[var(--paper)] p-6 shadow-2xl"
           >
             <div className="flex items-center justify-between gap-3">
               <h2
                 id="template-modal-heading"
-                className="text-base font-semibold text-[var(--ink)]"
+                className="font-editorial text-base font-bold text-[var(--ink)]"
               >
                 {templateModal.mode === 'rename' ? '重命名模板' : '保存为我的常用模板'}
               </h2>
@@ -1418,7 +1620,7 @@ export function WorkbenchView({
                 type="button"
                 onClick={() => setTemplateModal(null)}
                 aria-label="关闭模板弹窗"
-                className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border border-[var(--border)] text-[var(--ink)] hover:bg-[var(--light)]"
+                className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-[4px] border border-[var(--border)] text-[var(--ink)] hover:border-[var(--ink)]"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -1442,13 +1644,13 @@ export function WorkbenchView({
                   setTemplateModal({ ...templateModal, name: e.target.value })
                 }
                 placeholder="例如：小红书治愈日签、技术信息图常用"
-                className="w-full rounded-xl border border-[var(--border)] bg-white px-3.5 py-2.5 text-sm text-[var(--ink)]"
+                className="w-full rounded-[4px] border border-[var(--border)] bg-[var(--paper)] px-3.5 py-2.5 text-sm text-[var(--ink)]"
               />
             </div>
 
             {templateModal.mode === 'create' && (
               <>
-                <div className="mt-4 rounded-xl border border-[var(--border)] bg-[#fafbf8] p-3">
+                <div className="mt-4 rounded-[4px] border border-[var(--border)] bg-[var(--bg)] p-3">
                   <p className="text-[11px] font-semibold text-[var(--muted)]">将保存以下创作条件</p>
                   <p className="mt-1 text-xs leading-relaxed text-[var(--ink)]">
                     {summarizeDraftConditions(templateModal.draftSnapshot, activeStyles, LAYOUTS)}
@@ -1466,7 +1668,7 @@ export function WorkbenchView({
                       onChange={(e) =>
                         setTemplateModal({ ...templateModal, includeTopic: e.target.checked })
                       }
-                      className="mt-0.5 rounded border-[var(--border)] accent-[var(--green)]"
+                      className="mt-0.5 rounded-[2px] border-[var(--border)] accent-[var(--seal)]"
                     />
                     <span>同时保存当前文案作为默认开头（仅在输入框为空时自动填充）</span>
                   </label>
@@ -1478,14 +1680,14 @@ export function WorkbenchView({
               <button
                 type="button"
                 onClick={() => setTemplateModal(null)}
-                className="cursor-pointer rounded-lg border border-[var(--border)] bg-white px-4 py-2 text-xs font-medium text-[var(--ink)] hover:bg-[var(--light)]"
+                className="cursor-pointer rounded-[4px] border border-[var(--border)] bg-[var(--paper)] px-4 py-2 text-xs font-medium text-[var(--ink)] hover:border-[var(--ink)]"
               >
                 取消
               </button>
               <button
                 type="submit"
                 disabled={!templateModal.name.trim()}
-                className="cursor-pointer rounded-lg bg-[var(--green)] px-4 py-2 text-xs font-semibold text-white hover:bg-[var(--green-hover)] disabled:opacity-50"
+                className="cursor-pointer rounded-[4px] bg-[var(--ink)] px-4 py-2 text-xs font-semibold text-[#fbf9f4] hover:bg-[var(--seal)] disabled:opacity-50"
               >
                 {templateModal.mode === 'rename' ? '确认修改' : '保存模板'}
               </button>

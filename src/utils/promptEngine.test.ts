@@ -2,15 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { COLOR_PALETTES, LAYOUTS, PURPOSES, STYLES, UNIFIED_STYLE_TAGS } from '../data/catalog';
 import {
+  applyQuickRefinementToPrompt,
   applyUserTemplateToDraft,
   buildStructuredPrompt,
   cleanPromptText,
   filterStyles,
   formatStyleSkillMarkdown,
   getLayoutsForKind,
+  getPaginationWindow,
   isValidRasterImageUrl,
   maskEmail,
   parseImportedSkillPayload,
+  pickRandomInspirationStyle,
   pickRecommendedStyleForKind,
   rankStylesForGallery,
   resolveInitialWorkbenchMode,
@@ -350,5 +353,35 @@ test('rankStylesForGallery surfaces distinct Page-1 styles for social-card vs in
     seenSignatures.add(sig);
   }
 });
+
+test('getPaginationWindow returns compact jumpable page tokens with ellipsis', () => {
+  assert.deepEqual(getPaginationWindow(0, 1), [0]);
+  assert.deepEqual(getPaginationWindow(2, 5), [0, 1, 2, 3, 4]);
+  assert.deepEqual(getPaginationWindow(0, 46), [0, 1, 2, 3, 'ellipsis', 45]);
+  assert.deepEqual(getPaginationWindow(20, 46), [0, 'ellipsis', 19, 20, 21, 'ellipsis', 45]);
+  assert.deepEqual(getPaginationWindow(45, 46), [0, 'ellipsis', 42, 43, 44, 45]);
+});
+
+test('applyQuickRefinementToPrompt inserts modifier cleanly for CN and MJ formats without duplicating', () => {
+  const cnBase = '一幅治愈系秋季手冲咖啡插画。';
+  const cnOnce = applyQuickRefinementToPrompt(cnBase, 'more-whitespace', 'cn_natural');
+  assert.ok(cnOnce.includes('微调要求（更克制留白）'));
+  const cnTwice = applyQuickRefinementToPrompt(cnOnce, 'more-whitespace', 'cn_natural');
+  assert.equal(cnTwice, cnOnce);
+
+  const mjBase = 'Warm autumn pour-over coffee illustration --ar 3:4 --stylize 250';
+  const mjRefined = applyQuickRefinementToPrompt(mjBase, 'richer-lighting', 'en_mj');
+  assert.ok(mjRefined.includes('luminous natural rim lighting'));
+  assert.ok(mjRefined.endsWith('--ar 3:4 --stylize 250'));
+});
+
+test('pickRandomInspirationStyle selects from pool and avoids excluded id when alternatives exist', () => {
+  const smallPool = STYLES.slice(0, 3);
+  const picked = pickRandomInspirationStyle(smallPool, smallPool[0].id, () => 0);
+  assert.ok(picked);
+  assert.notEqual(picked.id, smallPool[0].id);
+  assert.equal(pickRandomInspirationStyle([], undefined), null);
+});
+
 
 

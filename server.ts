@@ -159,14 +159,18 @@ function sanitizeSceneOverrides(raw: unknown): Partial<Record<PurposeKind, strin
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-function sanitizePalette(raw: unknown): [string, string, string] {
-  const fallback: [string, string, string] = ['#235A40', '#C48147', '#F5F1E6'];
-  if (!Array.isArray(raw) || raw.length < 3) return fallback;
+function sanitizePalette(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
   const hexRegex = /^#[0-9a-fA-F]{6}$/;
-  const p0 = typeof raw[0] === 'string' && hexRegex.test(raw[0]) ? raw[0] : fallback[0];
-  const p1 = typeof raw[1] === 'string' && hexRegex.test(raw[1]) ? raw[1] : fallback[1];
-  const p2 = typeof raw[2] === 'string' && hexRegex.test(raw[2]) ? raw[2] : fallback[2];
-  return [p0, p1, p2];
+  const out: string[] = [];
+  for (const item of raw) {
+    if (typeof item === 'string' && hexRegex.test(item.trim())) {
+      const upper = item.trim().toUpperCase();
+      if (!out.includes(upper)) out.push(upper);
+    }
+    if (out.length >= 3) break;
+  }
+  return out;
 }
 
 function sanitizeStyleId(raw: unknown): string {
@@ -558,7 +562,7 @@ async function startServer() {
                 : 'C-10',
             recommendedKinds: sanitizeRecommendedKinds(item.recommendedKinds),
             image: safeImage,
-            palettePreview: ['#235A40', '#C48147', '#F5F1E6'],
+            palettePreview: sanitizePalette(item.palettePreview),
             updatedAt: now,
           };
           const idx = nextCustom.findIndex((c) => c.id === id);

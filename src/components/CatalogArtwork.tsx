@@ -22,7 +22,7 @@ export function StyleArtwork({
 
   return (
     <div
-      className={`relative flex items-center justify-center overflow-hidden bg-[#f6f5ef] ${className}`}
+      className={`relative flex items-center justify-center overflow-hidden bg-[#f4f1ea] ${className}`}
     >
       {!exhausted ? (
         <img
@@ -39,14 +39,14 @@ export function StyleArtwork({
           }}
           className={
             fit === 'contain'
-              ? 'max-h-full max-w-full h-auto w-auto object-contain'
+              ? 'h-auto max-h-full w-auto max-w-full object-contain'
               : 'h-full w-full object-cover'
           }
         />
       ) : (
         <div
           className="flex h-full w-full items-center justify-center p-3 text-center text-xs text-[var(--muted)]"
-          style={{ backgroundColor: style.palettePreview[2] }}
+          style={{ backgroundColor: style.palettePreview?.[2] ?? '#F4F1EA' }}
         >
           {style.title}
         </div>
@@ -73,7 +73,7 @@ export function LayoutSchematic({
   if (layout.image && !imgFailed) {
     return (
       <div
-        className={`relative flex items-center justify-center overflow-hidden bg-[#f4f6f0] ${className}`}
+        className={`relative flex items-center justify-center overflow-hidden bg-[#f4f1ea] ${className}`}
         aria-label={`${layout.title}版式预览图`}
       >
         <img
@@ -84,7 +84,7 @@ export function LayoutSchematic({
           onError={() => setImgFailed(true)}
           className={
             fit === 'contain'
-              ? 'max-h-full max-w-full h-auto w-auto object-contain'
+              ? 'h-auto max-h-full w-auto max-w-full object-contain'
               : 'h-full w-full object-cover'
           }
         />
@@ -94,11 +94,13 @@ export function LayoutSchematic({
 
   return (
     <div
-      className={`flex items-center justify-center bg-[#f4f6f0] p-3 ${className}`}
+      className={`flex items-center justify-center bg-[#f4f1ea] p-3 ${className}`}
       aria-label={`${layout.title}版式结构示意`}
     >
-      <div className="flex h-full w-full flex-col items-center justify-center rounded-lg border border-[#d9e0d6] bg-white p-2 text-center">
-        <span className="font-tabular text-[11px] font-semibold text-[var(--green)]">{layout.id}</span>
+      <div className="flex h-full w-full flex-col items-center justify-center rounded-[3px] border border-[var(--border)] bg-[var(--paper)] p-2 text-center">
+        <span className="font-tabular text-[11px] font-semibold text-[var(--seal)]">
+          {layout.id}
+        </span>
         <span className="mt-1 line-clamp-2 text-[10px] text-[var(--muted)]">{layout.title}</span>
       </div>
     </div>
@@ -114,25 +116,25 @@ export function ColorCardPreview({
 }) {
   return (
     <div
-      className={`relative flex flex-col justify-between overflow-hidden rounded-lg p-3 ${className}`}
+      className={`relative flex flex-col justify-between overflow-hidden rounded-[3px] p-3 ${className}`}
       style={{ backgroundColor: color.paperHex }}
     >
       <div className="flex items-start justify-between gap-2">
         <span
-          className="h-12 w-12 shrink-0 rounded-lg border border-black/10"
+          className="h-12 w-12 shrink-0 rounded-[3px] border border-black/10"
           style={{ backgroundColor: color.hex }}
         />
         <div className="flex flex-col items-end gap-1">
           <span
-            className="h-5 w-10 rounded border border-black/10"
+            className="h-5 w-10 rounded-[2px] border border-black/10"
             style={{ backgroundColor: color.secondaryHex }}
           />
-          <span className="font-tabular text-[11px] text-[#55665e]">{color.hex}</span>
+          <span className="font-tabular text-[11px] text-[#555550]">{color.hex}</span>
         </div>
       </div>
       <div className="flex items-center gap-1.5 pt-2">
-        <span className="h-2.5 flex-1 rounded-full" style={{ backgroundColor: color.hex }} />
-        <span className="h-2.5 w-8 rounded-full" style={{ backgroundColor: color.secondaryHex }} />
+        <span className="h-2 flex-1 rounded-[1px]" style={{ backgroundColor: color.hex }} />
+        <span className="h-2 w-8 rounded-[1px]" style={{ backgroundColor: color.secondaryHex }} />
       </div>
     </div>
   );

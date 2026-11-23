@@ -4,7 +4,8 @@ import { AdminConsoleView } from './components/AdminConsoleView';
 import { LandingView } from './components/LandingView';
 import { LoginView } from './components/LoginView';
 import { PolicyView } from './components/PolicyView';
-import { SiteFooter, TopBar, type AppRoute } from './components/TopBar';
+import { ToastBanner, type ToastMessage } from './components/ToastBanner';
+import { MobileBottomNav, SiteFooter, TopBar, type AppRoute } from './components/TopBar';
 import { WorkbenchView } from './components/WorkbenchView';
 import { LAYOUTS, PURPOSES, STYLES } from './data/catalog';
 import { getLayoutsForKind, pickRecommendedStyleForKind } from './utils/promptEngine';
@@ -144,9 +145,12 @@ export default function App() {
 
   const [previousRoute, setPreviousRoute] = useState<AppRoute>('landing');
   const [accountTab, setAccountTab] = useState<AccountTab>('credits');
-  const [pendingPreset, setPendingPreset] = useState<{ styleId?: string; kind?: PurposeKind } | null>(
-    null
-  );
+  const [toast, setToast] = useState<ToastMessage | null>(null);
+  const [pendingPreset, setPendingPreset] = useState<{
+    styleId?: string;
+    kind?: PurposeKind;
+    layoutId?: string;
+  } | null>(null);
 
   const [draft, setDraft] = useState<CreationDraft>(() =>
     loadJson<CreationDraft>('draft', DEFAULT_DRAFT)
@@ -280,7 +284,33 @@ export default function App() {
     saveJson('recentStyles', recentStyleIds);
   }, [recentStyleIds]);
 
-  const applyPresetToDraft = (preset: { styleId?: string; kind?: PurposeKind }) => {
+  const showToast = (text: string, tone: 'success' | 'info' = 'success') => {
+    const id = Date.now() + Math.floor(Math.random() * 1000);
+    setToast({ id, text, tone });
+    window.setTimeout(() => {
+      setToast((prev) => (prev?.id === id ? null : prev));
+    }, 2800);
+  };
+
+  const handleToggleFavoriteStyle = (id: string) => {
+    setFavoriteStyleIds((prev) => {
+      const exists = prev.includes(id);
+      const targetTitle = allSkills.find((s) => s.id === id)?.title;
+      showToast(
+        exists
+          ? `已取消收藏${targetTitle ? `「${targetTitle}」` : ''}`
+          : `已收藏画风${targetTitle ? `「${targetTitle}」` : ''}`,
+        exists ? 'info' : 'success'
+      );
+      return exists ? prev.filter((item) => item !== id) : [id, ...prev];
+    });
+  };
+
+  const applyPresetToDraft = (preset: {
+    styleId?: string;
+    kind?: PurposeKind;
+    layoutId?: string;
+  }) => {
     setDraft((prev) => {
       const targetStyle = preset.styleId
         ? enabledSkills.find((s) => s.id === preset.styleId)
@@ -295,14 +325,18 @@ export default function App() {
       const kindChanged = nextKind !== prev.kind;
       const nextStyleId =
         preset.styleId ?? pickRecommendedStyleForKind(nextKind, enabledSkills, prev.styleId).id;
+      const explicitLayoutValid =
+        preset.layoutId && layouts.some((l) => l.id === preset.layoutId)
+          ? preset.layoutId
+          : undefined;
       const validCurrentLayout = layouts.some((l) => l.id === prev.layoutId);
       return {
         ...prev,
         kind: nextKind,
-        layoutId:
-          kindChanged || !validCurrentLayout
-            ? layouts[0]?.id ?? ''
-            : prev.layoutId,
+        layoutId: !purpose.usesLayout
+          ? ''
+          : explicitLayoutValid ??
+            (kindChanged || !validCurrentLayout ? layouts[0]?.id ?? '' : prev.layoutId),
         styleId: nextStyleId,
         ratio: kindChanged ? purpose.recommendedRatio : prev.ratio,
       };
@@ -353,12 +387,22 @@ export default function App() {
     setAdminSession(null);
   };
 
-  const handleStartCreation = (preset?: { styleId?: string; kind?: PurposeKind }) => {
+  const handleStartCreation = (preset?: {
+    styleId?: string;
+    kind?: PurposeKind;
+    layoutId?: string;
+  }) => {
     if (preset) {
       applyPresetToDraft(preset);
     }
     if (session) {
       setRoute('workbench');
+      if (preset?.layoutId) {
+        const layTitle = LAYOUTS.find((l) => l.id === preset.layoutId)?.title;
+        if (layTitle) {
+          showToast(`已锁定版式「${layTitle}」进入创作工作台`);
+        }
+      }
       window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
     } else {
       setPendingPreset(preset ?? null);
@@ -472,6 +516,10 @@ export default function App() {
     ? `登录后将自动为你预选画风「${
         allSkills.find((s) => s.id === pendingPreset.styleId)?.title ?? '精选画风'
       }」`
+    : pendingPreset?.layoutId
+    ? `登录后将自动锁定版式「${
+        LAYOUTS.find((l) => l.id === pendingPreset.layoutId)?.title ?? pendingPreset.layoutId
+      }」`
     : pendingPreset?.kind
     ? `登录后将直接进入「${
         PURPOSES.find((p) => p.id === pendingPreset.kind)?.label ?? '创作'
@@ -519,6 +567,8 @@ export default function App() {
           <LandingView
             isLoggedIn={Boolean(session)}
             styles={enabledSkills}
+            favoriteStyleIds={favoriteStyleIds}
+            onToggleFavoriteStyle={handleToggleFavoriteStyle}
             onStartCreation={handleStartCreation}
           />
         )}
@@ -547,11 +597,7 @@ export default function App() {
             onTogglePinTemplate={handleTogglePinTemplate}
             favoriteStyleIds={favoriteStyleIds}
             recentStyleIds={recentStyleIds}
-            onToggleFavoriteStyle={(id) =>
-              setFavoriteStyleIds((prev) =>
-                prev.includes(id) ? prev.filter((item) => item !== id) : [id, ...prev]
-              )
-            }
+            onToggleFavoriteStyle={handleToggleFavoriteStyle}
             onRecordRecentStyle={(id) => {
               if (!id) return;
               setRecentStyleIds((prev) => [id, ...prev.filter((item) => item !== id)].slice(0, 6));
@@ -562,6 +608,7 @@ export default function App() {
               )
             }
             onOpenTasks={() => handleNavigate('account', { accountTab: 'tasks' })}
+            onNotify={showToast}
             isAdmin={isAdmin}
             onOpenSkillAdmin={isAdmin ? () => handleNavigate('admin') : undefined}
           />
@@ -596,6 +643,14 @@ export default function App() {
       </main>
 
       <SiteFooter onNavigate={(next) => handleNavigate(next)} />
+      <MobileBottomNav
+        route={route}
+        accountTab={accountTab}
+        session={session}
+        isAdmin={isAdmin}
+        onNavigate={handleNavigate}
+      />
+      <ToastBanner toast={toast} onDismiss={() => setToast(null)} />
     </div>
   );
 }

@@ -676,3 +676,126 @@ export function parseImportedSkillPayload(raw: string): Array<Partial<StyleItem>
     },
   ];
 }
+
+export type PromptRefinementId =
+  | 'more-whitespace'
+  | 'richer-lighting'
+  | 'journal-tactile'
+  | 'crisp-focus';
+
+export interface PromptRefinementOption {
+  id: PromptRefinementId;
+  label: string;
+  clauseCn: string;
+  clauseEn: string;
+}
+
+export const PROMPT_REFINEMENT_OPTIONS: PromptRefinementOption[] = [
+  {
+    id: 'more-whitespace',
+    label: '更克制留白',
+    clauseCn: '整体画面进一步增加 25% 以上的呼吸留白，精简次要装饰元素，构图更舒展通透、重点一眼聚焦。',
+    clauseEn: 'generous airy negative space, pared-back secondary details, calm breathing composition',
+  },
+  {
+    id: 'richer-lighting',
+    label: '强化光影质感',
+    clauseCn: '强化自然侧逆光与柔和投影层次，增添空气透视与细腻暖调光斑，让画面更有立体纵深感。',
+    clauseEn: 'luminous natural rim lighting, soft layered cast shadows, warm atmospheric depth',
+  },
+  {
+    id: 'journal-tactile',
+    label: '手账绘本感',
+    clauseCn: '增强手工水彩纸纹与轻盈手绘笔触肌理，边缘保留自然手写涂抹温度，呈现温柔治愈的手账绘本质感。',
+    clauseEn: 'tactile cold-press watercolor paper grain, organic hand-inked edges, warm illustrated notebook charm',
+  },
+  {
+    id: 'crisp-focus',
+    label: '主体更清晰',
+    clauseCn: '大幅提升核心主体轮廓与细节清晰度，背景适度柔和退后，确保主视觉与信息层级清晰利落。',
+    clauseEn: 'crisp focal subject silhouette, sharp hero details, softly receding uncluttered backdrop',
+  },
+];
+
+/**
+ * Applies a quick, deterministic one-click visual refinement modifier to a prompt without duplicating clauses.
+ */
+export function applyQuickRefinementToPrompt(
+  basePrompt: string,
+  refinementId: PromptRefinementId,
+  format: PromptFormat
+): string {
+  const clean = basePrompt.trim();
+  const option = PROMPT_REFINEMENT_OPTIONS.find((item) => item.id === refinementId);
+  if (!clean || !option) return clean;
+
+  if (format === 'en_mj') {
+    if (clean.includes(option.clauseEn)) return clean;
+    const paramIndex = clean.search(/\s--[a-z]+/i);
+    if (paramIndex >= 0) {
+      const head = clean.slice(0, paramIndex).replace(/[,\s.]+$/, '');
+      const tail = clean.slice(paramIndex).trim();
+      return `${head}, ${option.clauseEn} ${tail}`;
+    }
+    return `${clean.replace(/[,\s.]+$/, '')}, ${option.clauseEn}`;
+  }
+
+  if (clean.includes(option.clauseCn)) return clean;
+  return `${clean}\n\n微调要求（${option.label}）：${option.clauseCn}`;
+}
+
+/**
+ * Computes a compact, jumpable 0-indexed page number list with 'ellipsis' separators.
+ */
+export function getPaginationWindow(
+  currentPage: number,
+  totalPages: number
+): Array<number | 'ellipsis'> {
+  if (totalPages <= 1) return [0];
+  const clamped = Math.max(0, Math.min(currentPage, totalPages - 1));
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, i) => i);
+  }
+  const pages = new Set<number>([0, totalPages - 1, clamped]);
+  if (clamped > 0) pages.add(clamped - 1);
+  if (clamped < totalPages - 1) pages.add(clamped + 1);
+  if (clamped <= 2) {
+    pages.add(1);
+    pages.add(2);
+    pages.add(3);
+  }
+  if (clamped >= totalPages - 3) {
+    pages.add(totalPages - 2);
+    pages.add(totalPages - 3);
+    pages.add(totalPages - 4);
+  }
+  const sorted = Array.from(pages)
+    .filter((p) => p >= 0 && p < totalPages)
+    .sort((a, b) => a - b);
+
+  const output: Array<number | 'ellipsis'> = [];
+  for (let i = 0; i < sorted.length; i++) {
+    if (i > 0 && sorted[i] - sorted[i - 1] > 1) {
+      output.push('ellipsis');
+    }
+    output.push(sorted[i]);
+  }
+  return output;
+}
+
+/**
+ * Picks a surprise inspiration style from the provided pool, avoiding the currently open style when possible.
+ */
+export function pickRandomInspirationStyle(
+  styles: StyleItem[],
+  excludeId?: string,
+  randomFn: () => number = Math.random
+): StyleItem | null {
+  if (styles.length === 0) return null;
+  if (styles.length === 1) return styles[0];
+  const candidates = excludeId ? styles.filter((s) => s.id !== excludeId) : styles;
+  const pool = candidates.length > 0 ? candidates : styles;
+  const idx = Math.floor(Math.max(0, Math.min(0.999999, randomFn())) * pool.length);
+  return pool[idx] ?? pool[0];
+}
+
