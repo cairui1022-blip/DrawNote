@@ -1,4 +1,4 @@
-import { BookOpen, Clock, Palette, ShieldCheck, User } from 'lucide-react';
+import { BookOpen, Palette, ShieldCheck, User } from 'lucide-react';
 import type { UserSession } from '../types';
 
 export type AppRoute = 'landing' | 'login' | 'workbench' | 'admin' | 'account' | 'policy';
@@ -20,7 +20,7 @@ export function TopBar({ route, session, isAdmin, onNavigate }: TopBarProps) {
 
   return (
     <header className="sticky top-0 z-30 border-b border-[var(--border)] bg-[#fbf9f4]/95 backdrop-blur-md">
-      <div className="mx-auto flex h-14 max-w-[1400px] items-center justify-between gap-4 px-4 md:h-16 md:gap-8 md:px-8">
+      <div className="mx-auto flex h-[52px] max-w-[1400px] items-center justify-between gap-3 px-4 md:h-16 md:gap-8 md:px-8">
         {/* Zone 1: Editorial Wordmark + Miniature Cinnabar Artist Seal Stamp */}
         <a
           href="#top"
@@ -28,25 +28,25 @@ export function TopBar({ route, session, isAdmin, onNavigate }: TopBarProps) {
             e.preventDefault();
             onNavigate('landing');
           }}
-          className="group flex shrink-0 items-center gap-2 whitespace-nowrap transition-opacity hover:opacity-85"
+          className="group flex min-w-0 shrink-0 items-center gap-2 whitespace-nowrap transition-opacity hover:opacity-85"
           aria-label="画语 DrawNote 首页"
         >
           <span className="flex items-baseline gap-1.5 leading-none">
             <span className="font-editorial text-[19px] font-bold tracking-tight text-[var(--ink)]">
               画语
             </span>
-            <span className="font-editorial text-[16px] font-medium tracking-tight text-[var(--ink-soft)]">
+            <span className="font-editorial text-[15px] font-medium tracking-tight text-[var(--ink-soft)] sm:text-[16px]">
               DrawNote
             </span>
           </span>
           {/* Traditional square cinnabar artist seal stamp (落款朱砂印) */}
           <span
             aria-hidden="true"
-            className="inline-flex h-[21px] w-[21px] shrink-0 items-center justify-center rounded-[2px] border border-[var(--seal)] bg-[var(--accent-soft)] text-[var(--seal)] transition-transform group-hover:scale-[1.04]"
+            className="inline-flex h-[20px] w-[20px] shrink-0 items-center justify-center rounded-[2px] border border-[var(--seal)] bg-[var(--accent-soft)] text-[var(--seal)] transition-transform group-hover:scale-[1.04]"
           >
             <svg
-              width="15"
-              height="15"
+              width="14"
+              height="14"
               viewBox="0 0 16 16"
               fill="none"
               xmlns="http://www.w3.org/2000/svg"
@@ -108,7 +108,7 @@ export function TopBar({ route, session, isAdmin, onNavigate }: TopBarProps) {
                   : ''
               }`}
             >
-              任务记录
+              任务与额度
             </button>
           )}
           {isAdmin && (
@@ -124,12 +124,12 @@ export function TopBar({ route, session, isAdmin, onNavigate }: TopBarProps) {
         </nav>
 
         {/* Zone 3: Single crisp Sumi Ink primary action or account trigger */}
-        <div className="flex shrink-0 items-center gap-3">
+        <div className="flex shrink-0 items-center gap-2">
           {session ? (
             <button
               type="button"
               onClick={() => onNavigate('account', { accountTab: 'credits' })}
-              className="flex shrink-0 cursor-pointer items-center gap-2 whitespace-nowrap rounded-[4px] border border-[var(--border)] bg-[var(--paper)] px-3 py-1.5 text-xs font-medium text-[var(--ink)] transition-colors hover:border-[var(--ink)] hover:bg-[var(--surface-alt)] md:px-3.5 md:py-2"
+              className="flex min-h-[36px] shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-[4px] border border-[var(--border)] bg-[var(--paper)] px-3 py-1.5 text-xs font-medium text-[var(--ink)] transition-colors hover:border-[var(--ink)] hover:bg-[var(--surface-alt)] md:min-h-0 md:gap-2 md:px-3.5 md:py-2"
               aria-label={`我的账户，当前可用生图次数 ${totalCredits} 次`}
             >
               <User className="h-3.5 w-3.5 text-[var(--seal)]" aria-hidden="true" />
@@ -141,11 +141,19 @@ export function TopBar({ route, session, isAdmin, onNavigate }: TopBarProps) {
               </span>
               <span className="hidden text-[var(--ink-soft)] sm:inline">我的账户</span>
             </button>
+          ) : route === 'login' ? (
+            <button
+              type="button"
+              onClick={() => onNavigate('landing')}
+              className="min-h-[36px] shrink-0 cursor-pointer whitespace-nowrap rounded-[4px] border border-[var(--border)] bg-[var(--paper)] px-3.5 py-1.5 text-xs font-medium text-[var(--ink)] transition-colors hover:border-[var(--ink)] md:min-h-0 md:px-4 md:py-2 md:text-[13px]"
+            >
+              返回图鉴
+            </button>
           ) : (
             <button
               type="button"
               onClick={() => onNavigate('login')}
-              className="shrink-0 cursor-pointer whitespace-nowrap rounded-[4px] bg-[var(--ink)] px-4 py-2 text-xs font-medium text-[#fbf9f4] transition-colors hover:bg-[#2e2e2b] md:px-5 md:py-2 md:text-[13px]"
+              className="min-h-[36px] shrink-0 cursor-pointer whitespace-nowrap rounded-[4px] bg-[var(--ink)] px-4 py-1.5 text-xs font-medium text-[#fbf9f4] transition-colors hover:bg-[#2e2e2b] md:min-h-0 md:px-5 md:py-2 md:text-[13px]"
             >
               开始创作
             </button>
@@ -158,7 +166,6 @@ export function TopBar({ route, session, isAdmin, onNavigate }: TopBarProps) {
 
 interface MobileBottomNavProps {
   route: AppRoute;
-  accountTab?: 'credits' | 'tasks' | 'invites' | 'orders';
   session: UserSession | null;
   isAdmin: boolean;
   onNavigate: (
@@ -169,7 +176,6 @@ interface MobileBottomNavProps {
 
 export function MobileBottomNav({
   route,
-  accountTab,
   session,
   isAdmin,
   onNavigate,
@@ -196,19 +202,11 @@ export function MobileBottomNav({
       onClick: () => onNavigate(session ? 'workbench' : 'login'),
     },
     {
-      id: 'tasks',
-      label: '记录',
-      active: route === 'account' && accountTab === 'tasks',
-      icon: Clock,
-      onClick: () => onNavigate(session ? 'account' : 'login', { accountTab: 'tasks' }),
-    },
-    {
       id: 'account',
-      label: session ? '账户' : '登录',
-      active:
-        (route === 'account' && accountTab !== 'tasks') || (!session && route === 'login'),
+      label: session ? '我的' : '登录',
+      active: route === 'account' || (!session && route === 'login'),
       icon: User,
-      onClick: () => onNavigate(session ? 'account' : 'login', { accountTab: 'credits' }),
+      onClick: () => onNavigate(session ? 'account' : 'login', { accountTab: 'tasks' }),
     },
   ];
 
@@ -225,11 +223,11 @@ export function MobileBottomNav({
   return (
     <nav
       aria-label="移动端快捷导航"
-      className="fixed inset-x-0 bottom-0 z-30 border-t border-[var(--border)] bg-[#fbf9f4]/96 backdrop-blur-md md:hidden"
+      className="fixed inset-x-0 bottom-0 z-30 border-t border-[var(--border)] bg-[#fbf9f4]/96 backdrop-blur-md pb-[env(safe-area-inset-bottom)] md:hidden"
     >
       <div
         className={`mx-auto grid h-[56px] max-w-lg items-center ${
-          items.length === 5 ? 'grid-cols-5' : 'grid-cols-4'
+          items.length === 4 ? 'grid-cols-4' : 'grid-cols-3'
         }`}
       >
         {items.map((item) => {
@@ -240,20 +238,20 @@ export function MobileBottomNav({
               type="button"
               onClick={item.onClick}
               aria-current={item.active ? 'page' : undefined}
-              className={`relative flex min-h-[44px] cursor-pointer flex-col items-center justify-center gap-0.5 px-1 transition-colors ${
+              className={`relative flex min-h-[48px] cursor-pointer flex-col items-center justify-center gap-1 px-2 transition-colors ${
                 item.active
                   ? 'font-semibold text-[var(--seal)]'
-                  : 'text-[var(--muted)] hover:text-[var(--ink)]'
+                  : 'text-[var(--ink-soft)] hover:text-[var(--ink)]'
               }`}
             >
               {item.active && (
                 <span
                   aria-hidden="true"
-                  className="absolute inset-x-4 top-0 h-[2px] bg-[var(--seal)]"
+                  className="absolute inset-x-6 top-0 h-[2px] bg-[var(--seal)]"
                 />
               )}
-              <Icon className="h-[18px] w-[18px]" aria-hidden="true" />
-              <span className="whitespace-nowrap text-[10px] leading-none">{item.label}</span>
+              <Icon className="h-[19px] w-[19px]" aria-hidden="true" />
+              <span className="whitespace-nowrap text-xs leading-none">{item.label}</span>
             </button>
           );
         })}
@@ -264,30 +262,30 @@ export function MobileBottomNav({
 
 export function SiteFooter({ onNavigate }: { onNavigate: (route: AppRoute) => void }) {
   return (
-    <footer className="border-t border-[var(--border)] bg-[var(--surface-alt)] pb-[58px] md:pb-0">
+    <footer className="border-t border-[var(--border)] bg-[var(--surface-alt)] pb-[68px] md:pb-0">
       <div className="mx-auto flex max-w-[1400px] flex-wrap items-center justify-between gap-4 px-5 py-6 text-xs text-[var(--muted)] md:px-8">
         <span className="font-editorial text-[var(--ink-soft)]">
           © 画语 DrawNote · 独立插画风格年鉴与提示词画室
         </span>
-        <div className="flex items-center gap-6">
+        <div className="flex flex-wrap items-center gap-5 sm:gap-6">
           <button
             type="button"
             onClick={() => onNavigate('policy')}
-            className="cursor-pointer whitespace-nowrap transition-colors hover:text-[var(--ink)] hover:underline underline-offset-4"
+            className="min-h-[36px] cursor-pointer whitespace-nowrap transition-colors hover:text-[var(--ink)] hover:underline underline-offset-4 md:min-h-0"
           >
             使用与隐私说明
           </button>
           <button
             type="button"
             onClick={() => onNavigate('landing')}
-            className="cursor-pointer whitespace-nowrap transition-colors hover:text-[var(--ink)] hover:underline underline-offset-4"
+            className="min-h-[36px] cursor-pointer whitespace-nowrap transition-colors hover:text-[var(--ink)] hover:underline underline-offset-4 md:min-h-0"
           >
             画风图鉴
           </button>
           <button
             type="button"
             onClick={() => onNavigate('admin')}
-            className="cursor-pointer whitespace-nowrap text-[#9b9991] transition-colors hover:text-[var(--seal)] hover:underline underline-offset-4"
+            className="min-h-[36px] cursor-pointer whitespace-nowrap text-[#85837c] transition-colors hover:text-[var(--seal)] hover:underline underline-offset-4 md:min-h-0"
           >
             管理员入口
           </button>

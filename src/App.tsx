@@ -8,14 +8,20 @@ import { ToastBanner, type ToastMessage } from './components/ToastBanner';
 import { MobileBottomNav, SiteFooter, TopBar, type AppRoute } from './components/TopBar';
 import { WorkbenchView } from './components/WorkbenchView';
 import { LAYOUTS, PURPOSES, STYLES } from './data/catalog';
-import { getLayoutsForKind, pickRecommendedStyleForKind } from './utils/promptEngine';
+import {
+  applyUserTemplateToDraft,
+  getLayoutsForKind,
+  pickRecommendedStyleForKind,
+} from './utils/promptEngine';
 import type {
   AdminUser,
   AuthMethod,
   CreationDraft,
+  ImageModelPublicConfig,
   PromptFormat,
   PromptHistoryRecord,
   PurposeKind,
+  ServerUserQuota,
   StyleItem,
   UserSession,
   UserTemplate,
@@ -110,6 +116,7 @@ function createNewSession(authType: AuthMethod, identifier: string): UserSession
 
 export default function App() {
   const [allSkills, setAllSkills] = useState<StyleItem[]>(STYLES);
+  const [availableImageModels, setAvailableImageModels] = useState<ImageModelPublicConfig[]>([]);
 
   const [accountsMap, setAccountsMap] = useState<Record<string, UserSession>>(() =>
     loadJson<Record<string, UserSession>>('accounts', {})
@@ -144,7 +151,7 @@ export default function App() {
   });
 
   const [previousRoute, setPreviousRoute] = useState<AppRoute>('landing');
-  const [accountTab, setAccountTab] = useState<AccountTab>('credits');
+  const [accountTab, setAccountTab] = useState<AccountTab>('tasks');
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [pendingPreset, setPendingPreset] = useState<{
     styleId?: string;
@@ -189,7 +196,7 @@ export default function App() {
     loadJson<string[]>('recentStyles', ['FA-001'])
   );
 
-  // Sync live style Skills from backend store on mount
+  // Sync live style Skills and active image models from backend store on mount
   useEffect(() => {
     let cancelled = false;
     fetch('/api/skills')
@@ -202,10 +209,54 @@ export default function App() {
       .catch(() => {
         // Fallback silently to bundled STYLES if offline
       });
+    fetch('/api/health')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data && Array.isArray(data.availableImageModels)) {
+          setAvailableImageModels(data.availableImageModels);
+        }
+      })
+      .catch(() => {
+        // Ignore health fetch failure
+      });
     return () => {
       cancelled = true;
     };
   }, []);
+
+  const applyServerQuotaToSession = (quota: ServerUserQuota) => {
+    setSession((prev) => {
+      if (!prev || prev.accountKey !== quota.accountKey) return prev;
+      return {
+        ...prev,
+        creditsGift: quota.creditsGift,
+        creditsRedeem: quota.creditsRedeem,
+        creditsPaid: quota.creditsPaid,
+        redeemedCodes: quota.redeemedCodes,
+        creditLogs: quota.creditLogs,
+      };
+    });
+  };
+
+  // Sync authoritative 5-credit quota from server whenever active user changes
+  useEffect(() => {
+    const accountKey = session?.accountKey;
+    if (!accountKey) return;
+    let cancelled = false;
+    fetch(`/api/quota?accountKey=${encodeURIComponent(accountKey)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data?.quota) {
+          applyServerQuotaToSession(data.quota as ServerUserQuota);
+        }
+      })
+      .catch(() => {
+        // Ignore offline quota sync error
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.accountKey]);
 
   // Sync browser /admin URL path cleanly via History API (SPA navigation preserves in-memory admin session)
   useEffect(() => {
@@ -364,7 +415,7 @@ export default function App() {
     setPreviousRoute(route);
     setRoute(next);
     if (options?.accountTab) {
-      setAccountTab(options.accountTab);
+      setAccountTab(options.accountTab === 'invites' ? 'orders' : options.accountTab);
     }
     if (options?.anchor) {
       window.setTimeout(() => {
@@ -449,8 +500,20 @@ export default function App() {
     });
   };
 
+  const handleRenameTemplate = (id: string, name: string) => {
+    const cleanName = name.trim();
+    if (!cleanName) return;
+    setTemplates((prev) =>
+      prev.map((t) =>
+        t.id === id ? { ...t, name: cleanName, updatedAt: new Date().toISOString() } : t
+      )
+    );
+    showToast(`模板已重命名为「${cleanName}」`);
+  };
+
   const handleDeleteTemplate = (id: string) => {
     setTemplates((prev) => prev.filter((t) => t.id !== id));
+    showToast('已删除常用模板', 'info');
   };
 
   const handleTogglePinTemplate = (id: string) => {
@@ -477,35 +540,32 @@ export default function App() {
     }
   };
 
-  const handleRedeemCode = (rawCode: string): { ok: boolean; message: string } => {
+  const handleRedeemCode = async (rawCode: string): Promise<{ ok: boolean; message: string }> => {
     const code = rawCode.trim().toUpperCase();
     if (!code) {
       return { ok: false, message: '请输入有效的兑换码。' };
     }
     if (!session) return { ok: false, message: '请先登录账号。' };
-    if (session.redeemedCodes.includes(code)) {
-      return { ok: false, message: '该兑换码已在本账号使用过，每个码限用一次。' };
+    try {
+      const res = await fetch('/api/quota/redeem', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accountKey: session.accountKey,
+          code,
+        }),
+      });
+      const data = await res.json();
+      if (data.quota) {
+        applyServerQuotaToSession(data.quota as ServerUserQuota);
+      }
+      if (!res.ok || !data.ok) {
+        return { ok: false, message: data.message || '兑换失败，请检查兑换码。' };
+      }
+      return { ok: true, message: data.message || '兑换成功，已增加 5 次可用生图额度。' };
+    } catch {
+      return { ok: false, message: '网络请求异常，请稍后重试。' };
     }
-    if (code !== 'HR-2026-DRAW' && !/^HR-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) {
-      return { ok: false, message: '兑换码格式无效，可试用活动演示码 HR-2026-DRAW。' };
-    }
-    const now = new Date().toLocaleString('zh-CN', { hour12: false });
-    setSession({
-      ...session,
-      creditsRedeem: session.creditsRedeem + 5,
-      redeemedCodes: [...session.redeemedCodes, code],
-      creditLogs: [
-        {
-          id: `log_redeem_${Date.now()}`,
-          title: `兑换码奖励 (${code})`,
-          detail: '活动兑换码入账',
-          delta: '可用 +5',
-          createdAt: now,
-        },
-        ...session.creditLogs,
-      ],
-    });
-    return { ok: true, message: '兑换成功，已增加 5 次可用生图额度。' };
   };
 
   const existingUsernames = Object.values(accountsMap)
@@ -538,6 +598,7 @@ export default function App() {
         }}
         onAdminLogout={handleAdminLogout}
         onSkillsUpdated={(next) => setAllSkills(next)}
+        onAvailableImageModelsChanged={setAvailableImageModels}
         onBackToSite={() => {
           setRoute(session ? 'workbench' : 'landing');
           window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
@@ -559,10 +620,10 @@ export default function App() {
   const isAdmin = Boolean(adminSession);
 
   return (
-    <div className="flex min-h-screen flex-col bg-[var(--bg)] text-[var(--ink)]">
+    <div className="flex min-h-screen w-full min-w-0 flex-col overflow-x-clip bg-[var(--bg)] text-[var(--ink)]">
       <TopBar route={route} session={session} isAdmin={isAdmin} onNavigate={handleNavigate} />
 
-      <main className="flex-1">
+      <main className="min-w-0 flex-1">
         {route === 'landing' && (
           <LandingView
             isLoggedIn={Boolean(session)}
@@ -587,14 +648,13 @@ export default function App() {
           <WorkbenchView
             session={session}
             styles={enabledSkills}
+            availableImageModels={availableImageModels}
+            onQuotaUpdated={applyServerQuotaToSession}
             draft={draft}
             onChangeDraft={setDraft}
             lastPrompt={lastPrompt}
             onPromptGenerated={handlePromptGenerated}
-            templates={templates}
             onSaveTemplate={handleSaveTemplate}
-            onDeleteTemplate={handleDeleteTemplate}
-            onTogglePinTemplate={handleTogglePinTemplate}
             favoriteStyleIds={favoriteStyleIds}
             recentStyleIds={recentStyleIds}
             onToggleFavoriteStyle={handleToggleFavoriteStyle}
@@ -620,6 +680,7 @@ export default function App() {
             styles={allSkills}
             activeTab={accountTab}
             history={history}
+            templates={templates}
             onChangeTab={setAccountTab}
             onReplayDraft={(replayedDraft, record) => {
               setDraft({ ...replayedDraft, accentColorIds: [...replayedDraft.accentColorIds] });
@@ -631,6 +692,22 @@ export default function App() {
               setRoute('workbench');
               window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
             }}
+            onApplyTemplate={(tpl) => {
+              const nextDraft = applyUserTemplateToDraft(draft, tpl);
+              setDraft(nextDraft);
+              setLastPrompt((prev) => (prev ? { ...prev, format: tpl.format } : null));
+              if (nextDraft.styleId) {
+                setRecentStyleIds((prev) =>
+                  [nextDraft.styleId, ...prev.filter((item) => item !== nextDraft.styleId)].slice(0, 6)
+                );
+              }
+              setRoute('workbench');
+              showToast(`已套用常用模板「${tpl.name}」`);
+              window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
+            }}
+            onRenameTemplate={handleRenameTemplate}
+            onDeleteTemplate={handleDeleteTemplate}
+            onTogglePinTemplate={handleTogglePinTemplate}
             onRedeemCode={handleRedeemCode}
             onReturnWorkbench={() => handleNavigate('workbench')}
             onLogout={handleLogout}
@@ -645,7 +722,6 @@ export default function App() {
       <SiteFooter onNavigate={(next) => handleNavigate(next)} />
       <MobileBottomNav
         route={route}
-        accountTab={accountTab}
         session={session}
         isAdmin={isAdmin}
         onNavigate={handleNavigate}

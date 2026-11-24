@@ -194,8 +194,10 @@ test('formatStyleSkillMarkdown and parseImportedSkillPayload round-trip cleanly 
   assert.equal(parsed[0].skillSystemPrompt, target.skillSystemPrompt);
 
   assert.equal(isValidRasterImageUrl('/src/assets/images/foo.jpg'), true);
+  assert.equal(isValidRasterImageUrl('/assets/aistudio/sample_1200x896.jpg'), true);
   assert.equal(isValidRasterImageUrl('https://raw.githubusercontent.com/yang0/handraw-style/main/images/individual/FA/FA-001.webp'), true);
   assert.equal(isValidRasterImageUrl('/src/assets/images/foo.svg'), false);
+  assert.equal(isValidRasterImageUrl('/assets/aistudio/foo.svg'), false);
   assert.equal(isValidRasterImageUrl('javascript:alert(1)'), false);
 });
 
@@ -382,6 +384,39 @@ test('pickRandomInspirationStyle selects from pool and avoids excluded id when a
   assert.notEqual(picked.id, smallPool[0].id);
   assert.equal(pickRandomInspirationStyle([], undefined), null);
 });
+
+test('Updated FB storybook styles reference local /assets/aistudio raster artwork and 3-color palettes', () => {
+  const updatedFbIds = [
+    ...Array.from({ length: 18 }, (_, i) => `FB-${String(i + 1).padStart(3, '0')}`),
+    'FB-019',
+    'FB-020',
+    'FB-021',
+    'FB-022',
+    'FB-023',
+    'FB-024',
+    'FB-025',
+    'FB-026',
+    'FB-027',
+    'FB-028',
+    'FB-029',
+    'FB-030',
+    'FB-031',
+    'FB-032',
+    'FB-035',
+    'FB-039',
+    'FB-041',
+  ];
+  for (const id of updatedFbIds) {
+    const style = STYLES.find((s) => s.id === id);
+    assert.ok(style, `Missing style ${id}`);
+    assert.ok(
+      style.image.startsWith(`/assets/aistudio/${id}`),
+      `Expected ${id} image to use /assets/aistudio/${id}*, got ${style.image}`
+    );
+    assert.ok(Array.isArray(style.palettePreview) && style.palettePreview.length === 3);
+  }
+});
+
 
 
 

@@ -415,7 +415,7 @@ export function VisualPickerModal({
                     ? '搜索编号（C-01）、色名、英文或 HEX 色值…'
                     : '搜索版式编号（SC-001 / IG-002 / SB-001）或构图关键词…'
                 }
-                className="w-full rounded-[4px] border border-[var(--border)] bg-[var(--bg)] py-2 pl-9 pr-4 text-sm text-[var(--ink)] placeholder:text-[#9b9991]"
+                className="w-full rounded-[4px] border border-[var(--border)] bg-[var(--bg)] py-2 pl-9 pr-4 text-base text-[var(--ink)] placeholder:text-[#9b9991] sm:text-sm"
               />
             </div>
 
@@ -497,7 +497,7 @@ export function VisualPickerModal({
 
           {/* Unified Style Tags Row */}
           {slot === 'style' && styleTab !== 'recent' && (
-            <div className="mt-3 flex flex-wrap items-center gap-1">
+            <div className="horizontal-scroll no-scrollbar mt-3 flex items-center gap-1.5 overflow-x-auto sm:flex-wrap sm:overflow-visible">
               {UNIFIED_STYLE_TAGS.map((tag) => (
                 <button
                   key={tag.id}
@@ -506,7 +506,7 @@ export function VisualPickerModal({
                     setStyleTagId(tag.id);
                     setPage(0);
                   }}
-                  className={`cursor-pointer whitespace-nowrap rounded-[3px] px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                  className={`shrink-0 cursor-pointer whitespace-nowrap rounded-[3px] px-2.5 py-1.5 text-xs font-medium transition-colors sm:py-1 sm:text-[11px] ${
                     styleTagId === tag.id
                       ? 'bg-[var(--accent-soft)] text-[var(--seal)] font-semibold'
                       : 'text-[var(--muted)] hover:bg-[var(--light)] hover:text-[var(--ink)]'

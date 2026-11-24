@@ -1,0 +1,41 @@
+[
+  {
+    "id": "qwen-default",
+    "label": "通义千问 Qwen 生图",
+    "provider": "qwen",
+    "modelName": "qwen-image-2.0",
+    "baseUrl": "https://dashscope.aliyuncs.com/api/v1",
+    "apiKey": "sk-ws-H.XMYXXDM.rViU.MEQCID-TQxjYnrUk2T_uDNnHb9YPs-0yqdbV6iX45KrL2PH-AiAlyvdyozFky1rG821Eb3rXNpLhaJxqpV5Rn7Ipl-OFpA",
+    "enabled": true,
+    "isDefault": true,
+    "supportedRatios": [
+      "3:4",
+      "1:1",
+      "4:3",
+      "9:16",
+      "16:9",
+      "2:3",
+      "3:2"
+    ],
+    "updatedAt": "2026/11/24 15:12:06"
+  },
+  {
+    "id": "jimeng-default",
+    "label": "即梦 Seedream 生图",
+    "provider": "jimeng",
+    "modelName": "doubao-seedream-3-0-t2i-250415",
+    "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+    "apiKey": "",
+    "enabled": false,
+    "isDefault": false,
+    "supportedRatios": [
+      "3:4",
+      "1:1",
+      "4:3",
+      "9:16",
+      "16:9",
+      "2:3",
+      "3:2"
+    ]
+  }
+]

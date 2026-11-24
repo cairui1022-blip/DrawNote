@@ -123,7 +123,7 @@ export function LoginView({
                   setAuthTab('username');
                   setErrorMsg('');
                 }}
-                className={`-mb-px cursor-pointer whitespace-nowrap border-b-2 pb-2.5 text-xs font-semibold transition-colors ${
+                className={`-mb-px min-h-[40px] cursor-pointer whitespace-nowrap border-b-2 pb-2.5 text-[13px] font-semibold transition-colors sm:min-h-0 sm:text-xs ${
                   authTab === 'username'
                     ? 'border-[var(--seal)] text-[var(--seal)]'
                     : 'border-transparent text-[var(--muted)] hover:text-[var(--ink)]'
@@ -139,7 +139,7 @@ export function LoginView({
                   setAuthTab('email');
                   setErrorMsg('');
                 }}
-                className={`-mb-px cursor-pointer whitespace-nowrap border-b-2 pb-2.5 text-xs font-semibold transition-colors ${
+                className={`-mb-px min-h-[40px] cursor-pointer whitespace-nowrap border-b-2 pb-2.5 text-[13px] font-semibold transition-colors sm:min-h-0 sm:text-xs ${
                   authTab === 'email'
                     ? 'border-[var(--seal)] text-[var(--seal)]'
                     : 'border-transparent text-[var(--muted)] hover:text-[var(--ink)]'
@@ -173,7 +173,7 @@ export function LoginView({
                   setErrorMsg('');
                 }}
                 placeholder="输入 2–24 位中英文、数字或下划线（如 林间画师）"
-                className="w-full rounded-[4px] border border-[var(--border)] bg-[var(--paper)] px-3.5 py-2.5 text-sm text-[var(--ink)] placeholder:text-[#9b9991]"
+                className="w-full rounded-[4px] border border-[var(--border)] bg-[var(--paper)] px-3.5 py-2.5 text-base text-[var(--ink)] placeholder:text-[#9b9991] sm:text-sm"
               />
               <p className="mt-2 flex items-center gap-1.5 text-xs text-[var(--muted)]">
                 <UserCheck className="h-3.5 w-3.5 shrink-0 text-[var(--seal)]" aria-hidden="true" />
@@ -249,7 +249,7 @@ export function LoginView({
                   setErrorMsg('');
                 }}
                 placeholder="you@example.com"
-                className="w-full rounded-[4px] border border-[var(--border)] bg-[var(--paper)] px-3.5 py-2.5 text-sm text-[var(--ink)] placeholder:text-[#9b9991]"
+                className="w-full rounded-[4px] border border-[var(--border)] bg-[var(--paper)] px-3.5 py-2.5 text-base text-[var(--ink)] placeholder:text-[#9b9991] sm:text-sm"
               />
             </div>
 

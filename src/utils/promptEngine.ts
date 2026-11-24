@@ -385,12 +385,13 @@ export function buildStructuredPrompt(
   const primaryColor = draft.primaryColorId
     ? COLOR_PALETTES.find((c) => c.id === draft.primaryColorId)
     : undefined;
-  const accentColors = draft.accentColorIds
+  const safeAccentIds = Array.isArray(draft.accentColorIds) ? draft.accentColorIds : [];
+  const accentColors = safeAccentIds
     .map((id) => COLOR_PALETTES.find((c) => c.id === id))
     .filter((c): c is NonNullable<typeof c> => Boolean(c));
   const ratio = draft.ratio || style?.defaultRatio || purpose.recommendedRatio || '3:4';
   const ratioLabel = ASPECT_RATIOS.find((r) => r.value === ratio)?.value ?? ratio;
-  const topic = draft.topic.trim() || '温暖日常的生活灵感画面';
+  const topic = (typeof draft.topic === 'string' ? draft.topic.trim() : '') || '温暖日常的生活灵感画面';
   const topicNoTrail = topic.replace(/[。.!！?？]+$/g, '');
   const sceneOverrideRule = style?.sceneOverrides?.[draft.kind]?.trim() || '';
 
@@ -570,6 +571,7 @@ export function isValidRasterImageUrl(url: string): boolean {
   if (/\.svg(\?|#|$)/i.test(trimmed)) return false;
   if (
     trimmed.startsWith('/src/assets/images/') ||
+    trimmed.startsWith('/assets/aistudio/') ||
     trimmed.startsWith('https://') ||
     trimmed.startsWith('http://')
   ) {

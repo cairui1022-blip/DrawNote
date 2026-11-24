@@ -1,10 +1,10 @@
 import 'dotenv/config';
+import crypto from 'crypto';
+import dns from 'dns/promises';
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { GoogleGenAI, ThinkingLevel } from '@google/genai';
-import { createServer as createViteServer } from 'vite';
 import {
   COLOR_PALETTES,
   LAYOUTS,
@@ -19,11 +19,33 @@ import {
   parseImportedSkillPayload,
 } from './src/utils/promptEngine';
 import { AdminAuthManager } from './src/utils/adminAuth';
+import {
+  buildProviderRequestSpec,
+  createDefaultQuotaRecord,
+  createDefaultStoredImageModels,
+  extractImageCandidateFromPayload,
+  IMAGE_PROVIDER_PRESETS,
+  isPrivateOrLoopbackIp,
+  redeemCodeOnQuota,
+  refundOneCredit,
+  reserveOneCredit,
+  resolveModelKeyStatus,
+  sanitizeModelId,
+  SUPPORTED_IMAGE_RATIOS,
+  toAdminImageModel,
+  toPublicImageModel,
+  validateProviderEndpointUrl,
+  type CreditBucketSource,
+  type StoredImageModelRecord,
+} from './src/utils/imageProviders';
 import type {
   ConcreteStyleCategory,
   CreationDraft,
+  ImageModelUpsertInput,
+  ImageProviderType,
   PromptFormat,
   PurposeKind,
+  ServerUserQuota,
   StyleItem,
   StyleSourceRepo,
 } from './src/types';
@@ -31,12 +53,39 @@ import type {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = Number(process.env.PORT || 3000);
+function readCliFlag(name: string): string | undefined {
+  const args = process.argv.slice(2);
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === `--${name}` && args[i + 1] && !args[i + 1].startsWith('--')) {
+      return args[i + 1];
+    }
+    if (arg.startsWith(`--${name}=`)) {
+      return arg.slice(name.length + 3);
+    }
+  }
+  return undefined;
+}
+
+const cliPort = Number(readCliFlag('port') || process.env.npm_config_port);
+const envPort = Number(process.env.PORT);
+const nginxPort = Number(process.env.NGINX_PORT);
+const defaultPort = Number(process.env.DEFAULT_APP_PORT || 3000);
+const PORT =
+  Number.isFinite(cliPort) && cliPort > 0
+    ? cliPort
+    : Number.isFinite(envPort) && envPort > 0 && envPort !== nginxPort
+      ? envPort
+      : defaultPort;
+const HOST = readCliFlag('host') || '0.0.0.0';
 const isProduction = process.env.NODE_ENV === 'production';
 
 const DATA_DIR = path.resolve(__dirname, 'data');
 const OVERRIDES_PATH = path.join(DATA_DIR, 'skills-overrides.json');
 const ADMIN_AUTH_PATH = path.join(DATA_DIR, 'admin-auth.json');
+const IMAGE_MODELS_PATH = path.join(DATA_DIR, 'image-models.json');
+const USER_QUOTAS_PATH = path.join(DATA_DIR, 'user-quotas.json');
+const GENERATED_IMAGES_DIR = path.join(DATA_DIR, 'generated-images');
 const BUILTIN_IDS = new Set(STYLES.map((s) => s.id));
 const VALID_STYLE_CATEGORIES = new Set<ConcreteStyleCategory>(VALID_CONCRETE_CATEGORIES);
 const VALID_PURPOSE_KINDS = new Set<PurposeKind>([
@@ -53,10 +102,14 @@ interface SkillOverridesStore {
   custom: StyleItem[];
 }
 
-function loadOverrides(): SkillOverridesStore {
+function ensureDataDir(): void {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
+}
+
+function loadOverrides(): SkillOverridesStore {
+  ensureDataDir();
   if (!fs.existsSync(OVERRIDES_PATH)) {
     const empty: SkillOverridesStore = { patches: {}, custom: [] };
     fs.writeFileSync(OVERRIDES_PATH, JSON.stringify(empty, null, 2), 'utf-8');
@@ -77,10 +130,414 @@ let overridesStore: SkillOverridesStore = loadOverrides();
 
 function saveOverrides(next: SkillOverridesStore): void {
   overridesStore = next;
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
+  ensureDataDir();
   fs.writeFileSync(OVERRIDES_PATH, JSON.stringify(next, null, 2), 'utf-8');
+}
+
+function sanitizeImageProvider(raw: unknown): ImageProviderType {
+  if (raw === 'qwen' || raw === 'jimeng' || raw === 'gemini' || raw === 'openai-compatible') {
+    return raw;
+  }
+  return 'qwen';
+}
+
+function loadImageModels(): StoredImageModelRecord[] {
+  ensureDataDir();
+  if (!fs.existsSync(IMAGE_MODELS_PATH)) {
+    const initial = createDefaultStoredImageModels();
+    fs.writeFileSync(IMAGE_MODELS_PATH, JSON.stringify(initial, null, 2), 'utf-8');
+    return initial;
+  }
+  try {
+    const raw = JSON.parse(fs.readFileSync(IMAGE_MODELS_PATH, 'utf-8'));
+    if (!Array.isArray(raw)) return createDefaultStoredImageModels();
+    return raw.map((item: Partial<StoredImageModelRecord>, idx: number) => {
+      const provider = sanitizeImageProvider(item.provider);
+      const preset = IMAGE_PROVIDER_PRESETS[provider];
+      return {
+        id: sanitizeModelId(item.id || `${provider}-${idx + 1}`),
+        label:
+          typeof item.label === 'string' && item.label.trim()
+            ? item.label.trim().slice(0, 48)
+            : preset.defaultLabel,
+        provider,
+        modelName:
+          typeof item.modelName === 'string' && item.modelName.trim()
+            ? item.modelName.trim().slice(0, 80)
+            : preset.defaultModelName,
+        baseUrl:
+          typeof item.baseUrl === 'string' && item.baseUrl.trim()
+            ? item.baseUrl.trim().replace(/\/+$/, '')
+            : preset.defaultBaseUrl,
+        apiKey: typeof item.apiKey === 'string' ? item.apiKey.trim() : '',
+        enabled: Boolean(item.enabled),
+        isDefault: Boolean(item.isDefault),
+        supportedRatios:
+          Array.isArray(item.supportedRatios) && item.supportedRatios.length > 0
+            ? item.supportedRatios.filter((r): r is string => typeof r === 'string')
+            : [...SUPPORTED_IMAGE_RATIOS],
+        updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : undefined,
+      };
+    });
+  } catch {
+    return createDefaultStoredImageModels();
+  }
+}
+
+let imageModelsStore: StoredImageModelRecord[] = loadImageModels();
+
+function saveImageModels(next: StoredImageModelRecord[]): void {
+  imageModelsStore = next;
+  ensureDataDir();
+  fs.writeFileSync(IMAGE_MODELS_PATH, JSON.stringify(next, null, 2), 'utf-8');
+}
+
+function getEnabledPublicImageModels() {
+  const envGeminiKey = process.env.GEMINI_API_KEY;
+  return imageModelsStore
+    .filter((m) => {
+      if (!m.enabled) return false;
+      const { effectiveKey } = resolveModelKeyStatus(m, envGeminiKey);
+      return Boolean(effectiveKey);
+    })
+    .map(toPublicImageModel);
+}
+
+function loadUserQuotas(): Record<string, ServerUserQuota> {
+  ensureDataDir();
+  if (!fs.existsSync(USER_QUOTAS_PATH)) {
+    fs.writeFileSync(USER_QUOTAS_PATH, JSON.stringify({}, null, 2), 'utf-8');
+    return {};
+  }
+  try {
+    const raw = JSON.parse(fs.readFileSync(USER_QUOTAS_PATH, 'utf-8'));
+    return raw && typeof raw === 'object' ? (raw as Record<string, ServerUserQuota>) : {};
+  } catch {
+    return {};
+  }
+}
+
+let userQuotasStore: Record<string, ServerUserQuota> = loadUserQuotas();
+
+function saveUserQuotas(next: Record<string, ServerUserQuota>): void {
+  userQuotasStore = next;
+  ensureDataDir();
+  fs.writeFileSync(USER_QUOTAS_PATH, JSON.stringify(next, null, 2), 'utf-8');
+}
+
+function sanitizeAccountKey(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim().toLowerCase();
+  if (trimmed.length < 4 || trimmed.length > 120) return null;
+  if (!/^(email|username):[^\s/\\]+$/.test(trimmed)) return null;
+  return trimmed;
+}
+
+function getOrCreateUserQuota(accountKey: string): ServerUserQuota {
+  const existing = userQuotasStore[accountKey];
+  if (existing) {
+    return existing;
+  }
+  const created = createDefaultQuotaRecord(accountKey);
+  saveUserQuotas({
+    ...userQuotasStore,
+    [accountKey]: created,
+  });
+  return created;
+}
+
+async function assertPublicEndpointSafe(rawUrl: string): Promise<string> {
+  const check = validateProviderEndpointUrl(rawUrl);
+  if (!check.ok) {
+    throw new Error(check.error || '目标接口地址未通过安全校验。');
+  }
+  const hostname = new URL(check.normalizedUrl).hostname;
+  try {
+    const records = await dns.lookup(hostname, { all: true });
+    if (!records.length || records.some((r) => isPrivateOrLoopbackIp(r.address))) {
+      throw new Error('目标域名解析到了受限内网地址，已拦截请求。');
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('内网')) {
+      throw err;
+    }
+    throw new Error(`无法解析目标服务域名 (${hostname})，请检查 Base URL 是否正确。`);
+  }
+  return check.normalizedUrl;
+}
+
+function persistGeneratedImageBuffer(buffer: Buffer, mimeType: string): string {
+  if (!fs.existsSync(GENERATED_IMAGES_DIR)) {
+    fs.mkdirSync(GENERATED_IMAGES_DIR, { recursive: true });
+  }
+  const lowerMime = mimeType.toLowerCase();
+  const ext = lowerMime.includes('jpeg') || lowerMime.includes('jpg')
+    ? 'jpg'
+    : lowerMime.includes('webp')
+    ? 'webp'
+    : 'png';
+  const filename = `img_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.${ext}`;
+  fs.writeFileSync(path.join(GENERATED_IMAGES_DIR, filename), buffer);
+  return `/api/generated-images/${filename}`;
+}
+
+async function downloadSafeRemoteImage(remoteUrl: string): Promise<{ buffer: Buffer; mimeType: string }> {
+  const safeUrl = await assertPublicEndpointSafe(remoteUrl);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20_000);
+  try {
+    const resp = await fetch(safeUrl, { signal: controller.signal });
+    if (!resp.ok) {
+      throw new Error(`下载生成图片失败（HTTP ${resp.status}）`);
+    }
+    const contentType = resp.headers.get('content-type') || 'image/png';
+    if (!contentType.toLowerCase().startsWith('image/')) {
+      throw new Error('上游返回的图片地址响应类型不是有效图像。');
+    }
+    const arrayBuf = await resp.arrayBuffer();
+    if (arrayBuf.byteLength === 0 || arrayBuf.byteLength > 15 * 1024 * 1024) {
+      throw new Error('生成的图片文件大小超出限制（最大 15MB）。');
+    }
+    return { buffer: Buffer.from(arrayBuf), mimeType: contentType };
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('下载生成图片超时，请稍后重试。');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function callUpstreamImageProvider(params: {
+  model: StoredImageModelRecord;
+  apiKey: string;
+  prompt: string;
+  ratio: string;
+  negativePrompt?: string;
+}): Promise<{ buffer: Buffer; mimeType: string }> {
+  const { model, apiKey, prompt, ratio, negativePrompt } = params;
+
+  if (model.provider === 'gemini') {
+    const { GoogleGenAI } = await import('@google/genai');
+    const ai = new GoogleGenAI({ apiKey });
+    if (/imagen/i.test(model.modelName)) {
+      const response = await ai.models.generateImages({
+        model: model.modelName,
+        prompt,
+        config: {
+          numberOfImages: 1,
+          aspectRatio: ratio,
+          outputMimeType: 'image/png',
+        },
+      });
+      const b64 = response.generatedImages?.[0]?.image?.imageBytes;
+      if (!b64) {
+        throw new Error('Gemini Imagen 未返回有效图像数据。');
+      }
+      return { buffer: Buffer.from(b64, 'base64'), mimeType: 'image/png' };
+    }
+    const response = await ai.models.generateContent({
+      model: model.modelName,
+      contents: prompt,
+      config: {
+        responseModalities: ['IMAGE'],
+      },
+    });
+    const parts = response.candidates?.[0]?.content?.parts ?? [];
+    for (const part of parts) {
+      if (part.inlineData?.data) {
+        return {
+          buffer: Buffer.from(part.inlineData.data, 'base64'),
+          mimeType: part.inlineData.mimeType || 'image/png',
+        };
+      }
+    }
+    throw new Error('Gemini 模型未返回图片内容，请确认模型名称支持生图。');
+  }
+
+  const safeBaseUrl = await assertPublicEndpointSafe(
+    model.baseUrl || IMAGE_PROVIDER_PRESETS[model.provider].defaultBaseUrl
+  );
+  const spec = buildProviderRequestSpec({
+    provider: model.provider,
+    baseUrl: safeBaseUrl,
+    apiKey,
+    modelName: model.modelName,
+    prompt,
+    ratio,
+    negativePrompt,
+  });
+
+  const safeEndpoint = await assertPublicEndpointSafe(spec.endpoint);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 35_000);
+  let payload: unknown;
+  try {
+    const resp = await fetch(safeEndpoint, {
+      method: 'POST',
+      headers: spec.headers,
+      body: JSON.stringify(spec.body),
+      signal: controller.signal,
+    });
+    const text = await resp.text();
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = { message: text.slice(0, 240) };
+    }
+    if (!resp.ok) {
+      const extracted = extractImageCandidateFromPayload(payload);
+      throw new Error(
+        extracted.errorMessage || `生图服务返回错误 (${resp.status})`
+      );
+    }
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('生图上游接口响应超时，请稍后重试或切换模型。');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  let candidate = extractImageCandidateFromPayload(payload);
+
+  // Poll DashScope async task if needed (e.g. wanx2.1-t2i-turbo / wan2.2-t2i-flash)
+  if (!candidate.url && !candidate.base64 && candidate.taskId && spec.taskStatusUrlTemplate) {
+    const pollUrl = await assertPublicEndpointSafe(
+      spec.taskStatusUrlTemplate.replace('{taskId}', encodeURIComponent(candidate.taskId))
+    );
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 1500));
+      const pollResp = await fetch(pollUrl, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      const pollData = await pollResp.json();
+      const polled = extractImageCandidateFromPayload(pollData);
+      if (polled.url || polled.base64) {
+        candidate = polled;
+        break;
+      }
+      if (polled.taskStatus === 'FAILED' || polled.taskStatus === 'CANCELED') {
+        throw new Error(polled.errorMessage || '异步生图任务执行失败。');
+      }
+    }
+  }
+
+  if (candidate.base64) {
+    return {
+      buffer: Buffer.from(candidate.base64, 'base64'),
+      mimeType: candidate.mimeType || 'image/png',
+    };
+  }
+  if (candidate.url) {
+    return downloadSafeRemoteImage(candidate.url);
+  }
+  throw new Error(candidate.errorMessage || '生图服务未返回可用的图片结果。');
+}
+
+async function testImageModelConnectivity(params: {
+  model: StoredImageModelRecord;
+  apiKey: string;
+}): Promise<{ latencyMs: number; note: string }> {
+  const startedAt = Date.now();
+  const { model, apiKey } = params;
+  const testPrompt = 'a simple red circle on cream paper, minimal flat illustration';
+
+  if (model.provider === 'gemini') {
+    await callUpstreamImageProvider({
+      model,
+      apiKey,
+      prompt: testPrompt,
+      ratio: '1:1',
+    });
+    return {
+      latencyMs: Date.now() - startedAt,
+      note: '模型鉴权与生图响应正常',
+    };
+  }
+
+  const safeBaseUrl = await assertPublicEndpointSafe(
+    model.baseUrl || IMAGE_PROVIDER_PRESETS[model.provider].defaultBaseUrl
+  );
+  const spec = buildProviderRequestSpec({
+    provider: model.provider,
+    baseUrl: safeBaseUrl,
+    apiKey,
+    modelName: model.modelName,
+    prompt: testPrompt,
+    ratio: '1:1',
+  });
+  const safeEndpoint = await assertPublicEndpointSafe(spec.endpoint);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 25_000);
+  let payload: unknown;
+  try {
+    const resp = await fetch(safeEndpoint, {
+      method: 'POST',
+      headers: spec.headers,
+      body: JSON.stringify(spec.body),
+      signal: controller.signal,
+    });
+    const text = await resp.text();
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = { message: text.slice(0, 240) };
+    }
+    if (!resp.ok) {
+      const extracted = extractImageCandidateFromPayload(payload);
+      throw new Error(
+        extracted.errorMessage || `上游返回 HTTP ${resp.status}`
+      );
+    }
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('连接超时（25s），请检查 Base URL 网络连通性。');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  const candidate = extractImageCandidateFromPayload(payload);
+  if (candidate.url || candidate.base64) {
+    return {
+      latencyMs: Date.now() - startedAt,
+      note: '鉴权与同步生图链路正常',
+    };
+  }
+  if (candidate.taskId && spec.taskStatusUrlTemplate) {
+    const pollUrl = await assertPublicEndpointSafe(
+      spec.taskStatusUrlTemplate.replace('{taskId}', encodeURIComponent(candidate.taskId))
+    );
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 1200));
+      const pollResp = await fetch(pollUrl, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      const pollData = await pollResp.json();
+      const polled = extractImageCandidateFromPayload(pollData);
+      if (polled.url || polled.base64) {
+        return {
+          latencyMs: Date.now() - startedAt,
+          note: '鉴权与异步生图链路正常',
+        };
+      }
+      if (polled.taskStatus === 'FAILED' || polled.taskStatus === 'CANCELED') {
+        throw new Error(polled.errorMessage || '异步生图任务执行失败。');
+      }
+    }
+    return {
+      latencyMs: Date.now() - startedAt,
+      note: '鉴权成功，异步生图任务已进入队列',
+    };
+  }
+  throw new Error(candidate.errorMessage || '接口未返回有效的生图结果或任务 ID。');
 }
 
 function getLiveSkills(): StyleItem[] {
@@ -182,12 +639,18 @@ function sanitizeStyleId(raw: unknown): string {
   return `CS-${Date.now().toString().slice(-5)}`;
 }
 
-function getAiClient(): GoogleGenAI | null {
+function isAiConfigured(): boolean {
+  const apiKey = process.env.GEMINI_API_KEY;
+  return Boolean(apiKey && apiKey !== 'MY_GEMINI_API_KEY');
+}
+
+async function getAiClient() {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
     return null;
   }
-  return new GoogleGenAI({
+  const { GoogleGenAI, ThinkingLevel } = await import('@google/genai');
+  const ai = new GoogleGenAI({
     apiKey,
     httpOptions: {
       headers: {
@@ -195,6 +658,7 @@ function getAiClient(): GoogleGenAI | null {
       },
     },
   });
+  return { ai, ThinkingLevel };
 }
 
 async function startServer() {
@@ -287,12 +751,321 @@ async function startServer() {
     const live = getLiveSkills();
     res.json({
       ok: true,
-      aiAvailable: Boolean(getAiClient()),
-      availableImageModels: [],
+      aiAvailable: isAiConfigured(),
+      availableImageModels: getEnabledPublicImageModels(),
       skillsCount: live.length,
       layoutsCount: LAYOUTS.length,
       colorsCount: COLOR_PALETTES.length,
     });
+  });
+
+  // --- Admin Server-Side Image Model & API Key Configuration ---
+  app.get('/api/admin/image-models', requireAdminAuth, (_req, res) => {
+    const envGeminiKey = process.env.GEMINI_API_KEY;
+    res.json({
+      models: imageModelsStore.map((m) => toAdminImageModel(m, envGeminiKey)),
+    });
+  });
+
+  app.post('/api/admin/image-models', requireAdminAuth, (req, res) => {
+    const body = req.body as Partial<ImageModelUpsertInput>;
+    const provider = sanitizeImageProvider(body.provider);
+    const preset = IMAGE_PROVIDER_PRESETS[provider];
+    const label = typeof body.label === 'string' ? body.label.trim().slice(0, 48) : '';
+    const modelName = typeof body.modelName === 'string' ? body.modelName.trim().slice(0, 80) : '';
+    if (!label || !modelName) {
+      res.status(400).json({ message: '请填写模型显示名称与模型 ID（modelName）。' });
+      return;
+    }
+
+    const baseUrlRaw =
+      typeof body.baseUrl === 'string' && body.baseUrl.trim()
+        ? body.baseUrl.trim()
+        : preset.defaultBaseUrl;
+    const urlCheck = validateProviderEndpointUrl(baseUrlRaw);
+    if (!urlCheck.ok) {
+      res.status(400).json({ message: urlCheck.error });
+      return;
+    }
+
+    const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
+    const candidateId = sanitizeModelId(body.id || `${provider}-${Date.now().toString(36)}`);
+    const uniqueId = imageModelsStore.some((m) => m.id === candidateId)
+      ? `${candidateId}-${Math.floor(Math.random() * 90 + 10)}`
+      : candidateId;
+
+    const candidateRecord: StoredImageModelRecord = {
+      id: uniqueId,
+      label,
+      provider,
+      modelName,
+      baseUrl: urlCheck.normalizedUrl,
+      apiKey,
+      enabled: Boolean(body.enabled),
+      isDefault: Boolean(body.isDefault) || imageModelsStore.length === 0,
+      supportedRatios: [...SUPPORTED_IMAGE_RATIOS],
+      updatedAt: new Date().toLocaleString('zh-CN', { hour12: false }),
+    };
+
+    const keyCheck = resolveModelKeyStatus(candidateRecord, process.env.GEMINI_API_KEY);
+    if (candidateRecord.enabled && !keyCheck.effectiveKey) {
+      res.status(400).json({ message: '请先填写有效的 API Key 后再启用该生图模型。' });
+      return;
+    }
+
+    const nextList = candidateRecord.isDefault
+      ? [candidateRecord, ...imageModelsStore.map((m) => ({ ...m, isDefault: false }))]
+      : [candidateRecord, ...imageModelsStore];
+
+    saveImageModels(nextList);
+    res.status(201).json({
+      model: toAdminImageModel(candidateRecord, process.env.GEMINI_API_KEY),
+      models: nextList.map((m) => toAdminImageModel(m, process.env.GEMINI_API_KEY)),
+      availableImageModels: getEnabledPublicImageModels(),
+    });
+  });
+
+  app.put('/api/admin/image-models/:id', requireAdminAuth, (req, res) => {
+    const targetId = req.params.id;
+    const existing = imageModelsStore.find((m) => m.id === targetId);
+    if (!existing) {
+      res.status(404).json({ message: '未找到对应的生图模型配置。' });
+      return;
+    }
+
+    const body = req.body as Partial<ImageModelUpsertInput> & { clearApiKey?: boolean };
+    const provider =
+      body.provider !== undefined ? sanitizeImageProvider(body.provider) : existing.provider;
+    const preset = IMAGE_PROVIDER_PRESETS[provider];
+
+    let normalizedBaseUrl = existing.baseUrl;
+    if (typeof body.baseUrl === 'string' && body.baseUrl.trim()) {
+      const urlCheck = validateProviderEndpointUrl(body.baseUrl);
+      if (!urlCheck.ok) {
+        res.status(400).json({ message: urlCheck.error });
+        return;
+      }
+      normalizedBaseUrl = urlCheck.normalizedUrl;
+    } else if (!normalizedBaseUrl) {
+      normalizedBaseUrl = preset.defaultBaseUrl;
+    }
+
+    const nextApiKey = body.clearApiKey
+      ? ''
+      : typeof body.apiKey === 'string' && body.apiKey.trim()
+      ? body.apiKey.trim()
+      : existing.apiKey;
+
+    const nextEnabled = typeof body.enabled === 'boolean' ? body.enabled : existing.enabled;
+    const nextIsDefault = typeof body.isDefault === 'boolean' ? body.isDefault : existing.isDefault;
+
+    const updated: StoredImageModelRecord = {
+      ...existing,
+      provider,
+      label:
+        typeof body.label === 'string' && body.label.trim()
+          ? body.label.trim().slice(0, 48)
+          : existing.label,
+      modelName:
+        typeof body.modelName === 'string' && body.modelName.trim()
+          ? body.modelName.trim().slice(0, 80)
+          : existing.modelName,
+      baseUrl: normalizedBaseUrl,
+      apiKey: nextApiKey,
+      enabled: body.clearApiKey ? false : nextEnabled,
+      isDefault: nextIsDefault,
+      updatedAt: new Date().toLocaleString('zh-CN', { hour12: false }),
+    };
+
+    const keyCheck = resolveModelKeyStatus(updated, process.env.GEMINI_API_KEY);
+    if (updated.enabled && !keyCheck.effectiveKey) {
+      res.status(400).json({ message: '请先配置服务端 API Key，再开启启用开关。' });
+      return;
+    }
+
+    const nextList = imageModelsStore.map((m) => {
+      if (m.id === targetId) return updated;
+      return updated.isDefault ? { ...m, isDefault: false } : m;
+    });
+
+    saveImageModels(nextList);
+    res.json({
+      model: toAdminImageModel(updated, process.env.GEMINI_API_KEY),
+      models: nextList.map((m) => toAdminImageModel(m, process.env.GEMINI_API_KEY)),
+      availableImageModels: getEnabledPublicImageModels(),
+    });
+  });
+
+  app.delete('/api/admin/image-models/:id', requireAdminAuth, (req, res) => {
+    const targetId = req.params.id;
+    if (!imageModelsStore.some((m) => m.id === targetId)) {
+      res.status(404).json({ message: '未找到要删除的模型配置。' });
+      return;
+    }
+    let nextList = imageModelsStore.filter((m) => m.id !== targetId);
+    if (nextList.length > 0 && !nextList.some((m) => m.isDefault)) {
+      nextList = nextList.map((m, idx) => (idx === 0 ? { ...m, isDefault: true } : m));
+    }
+    saveImageModels(nextList);
+    res.json({
+      models: nextList.map((m) => toAdminImageModel(m, process.env.GEMINI_API_KEY)),
+      availableImageModels: getEnabledPublicImageModels(),
+    });
+  });
+
+  app.post('/api/admin/image-models/test', requireAdminAuth, async (req, res) => {
+    const body = req.body as Partial<ImageModelUpsertInput> & { editingId?: string };
+    const existing = body.editingId
+      ? imageModelsStore.find((m) => m.id === body.editingId)
+      : undefined;
+    const provider = sanitizeImageProvider(body.provider ?? existing?.provider);
+    const preset = IMAGE_PROVIDER_PRESETS[provider];
+    const modelName =
+      typeof body.modelName === 'string' && body.modelName.trim()
+        ? body.modelName.trim().slice(0, 80)
+        : existing?.modelName ?? '';
+    if (!modelName) {
+      res.status(400).json({ ok: false, message: '请先填写模型 ID（modelName）。' });
+      return;
+    }
+
+    const baseUrlRaw =
+      typeof body.baseUrl === 'string' && body.baseUrl.trim()
+        ? body.baseUrl.trim()
+        : existing?.baseUrl || preset.defaultBaseUrl;
+    const urlCheck = validateProviderEndpointUrl(baseUrlRaw);
+    if (!urlCheck.ok) {
+      res.status(400).json({ ok: false, message: urlCheck.error });
+      return;
+    }
+
+    const rawInputKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
+    const candidateRecord: StoredImageModelRecord = {
+      id: existing?.id ?? 'draft-test',
+      label: (typeof body.label === 'string' && body.label.trim()) || existing?.label || modelName,
+      provider,
+      modelName,
+      baseUrl: urlCheck.normalizedUrl,
+      apiKey: rawInputKey || existing?.apiKey || '',
+      enabled: true,
+      isDefault: false,
+      supportedRatios: [...SUPPORTED_IMAGE_RATIOS],
+    };
+    const { effectiveKey } = resolveModelKeyStatus(candidateRecord, process.env.GEMINI_API_KEY);
+    if (!effectiveKey) {
+      res.status(400).json({ ok: false, message: '请先填写 API Key 再进行连通性验证。' });
+      return;
+    }
+
+    const startedAt = Date.now();
+    try {
+      const result = await testImageModelConnectivity({
+        model: candidateRecord,
+        apiKey: effectiveKey,
+      });
+      res.json({
+        ok: true,
+        latencyMs: result.latencyMs,
+        modelName: candidateRecord.modelName,
+        provider: candidateRecord.provider,
+        message: `连通性验证通过（耗时 ${(result.latencyMs / 1000).toFixed(1)}s · ${result.note}）`,
+      });
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : '未知连接异常';
+      res.status(422).json({
+        ok: false,
+        latencyMs: Date.now() - startedAt,
+        modelName: candidateRecord.modelName,
+        provider: candidateRecord.provider,
+        message: `连通性验证失败：${reason}`,
+      });
+    }
+  });
+
+  app.post('/api/admin/image-models/:id/test', requireAdminAuth, async (req, res) => {
+    const targetId = req.params.id;
+    const target = imageModelsStore.find((m) => m.id === targetId);
+    if (!target) {
+      res.status(404).json({ ok: false, message: '未找到对应的生图模型配置。' });
+      return;
+    }
+    const { effectiveKey } = resolveModelKeyStatus(target, process.env.GEMINI_API_KEY);
+    if (!effectiveKey) {
+      res.status(400).json({ ok: false, message: '该模型尚未配置 API Key，请先填写后再验证。' });
+      return;
+    }
+
+    const startedAt = Date.now();
+    try {
+      const result = await testImageModelConnectivity({
+        model: target,
+        apiKey: effectiveKey,
+      });
+      res.json({
+        ok: true,
+        latencyMs: result.latencyMs,
+        modelName: target.modelName,
+        provider: target.provider,
+        message: `连通性验证通过（耗时 ${(result.latencyMs / 1000).toFixed(1)}s · ${result.note}）`,
+      });
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : '未知连接异常';
+      res.status(422).json({
+        ok: false,
+        latencyMs: Date.now() - startedAt,
+        modelName: target.modelName,
+        provider: target.provider,
+        message: `连通性验证失败：${reason}`,
+      });
+    }
+  });
+
+  // --- Server-Side User Image Quota (5 Free Credits per User) ---
+  app.get('/api/quota', (req, res) => {
+    const accountKey = sanitizeAccountKey(req.query.accountKey);
+    if (!accountKey) {
+      res.status(400).json({ message: '无效的用户账户标识。' });
+      return;
+    }
+    const quota = getOrCreateUserQuota(accountKey);
+    res.json({ quota });
+  });
+
+  app.post('/api/quota/redeem', (req, res) => {
+    const { accountKey: rawKey, code = '' } = req.body as {
+      accountKey?: string;
+      code?: string;
+    };
+    const accountKey = sanitizeAccountKey(rawKey);
+    if (!accountKey) {
+      res.status(400).json({ ok: false, message: '请先登录有效账号。' });
+      return;
+    }
+    const current = getOrCreateUserQuota(accountKey);
+    const result = redeemCodeOnQuota(current, typeof code === 'string' ? code : '');
+    if (!result.ok) {
+      res.status(400).json({ ok: false, message: result.message, quota: current });
+      return;
+    }
+    saveUserQuotas({
+      ...userQuotasStore,
+      [accountKey]: result.nextQuota,
+    });
+    res.json({ ok: true, message: result.message, quota: result.nextQuota });
+  });
+
+  app.get('/api/generated-images/:filename', (req, res) => {
+    const { filename } = req.params;
+    if (!/^img_[a-zA-Z0-9_]+\.(png|jpg|webp)$/.test(filename)) {
+      res.status(400).end();
+      return;
+    }
+    const fullPath = path.join(GENERATED_IMAGES_DIR, filename);
+    if (!fs.existsSync(fullPath)) {
+      res.status(404).end();
+      return;
+    }
+    res.sendFile(fullPath);
   });
 
   // --- Skill Management Backend API (Public read; Admin-only mutations) ---
@@ -596,7 +1369,7 @@ async function startServer() {
   // --- Prompt Generation Endpoint (reads LIVE configured Skills + Scene Rules + Scene Overrides) ---
   app.post('/api/prompts', async (req, res) => {
     try {
-      const { draft, format = 'cn_natural', mode = 'ai' } = req.body as {
+      const { draft, format = 'cn_natural', mode = 'structured' } = req.body as {
         draft?: CreationDraft;
         format?: PromptFormat;
         mode?: 'ai' | 'structured';
@@ -617,8 +1390,8 @@ async function startServer() {
         return;
       }
 
-      const ai = getAiClient();
-      if (!ai) {
+      const gemini = await getAiClient();
+      if (!gemini) {
         res.status(503).json({
           code: 'AI_UNAVAILABLE',
           message: '当前环境未启用 AI 润色密钥，可一键使用「结构化模板生成」立即产出提示词。',
@@ -678,12 +1451,12 @@ async function startServer() {
         .filter(Boolean)
         .join('\n');
 
-      const response = await ai.models.generateContent({
+      const response = await gemini.ai.models.generateContent({
         model: 'gemini-4-hydrogen',
         contents: userBrief,
         config: {
           systemInstruction: `你是 画语 DrawNote 的资深视觉导演与提示词架构师。你的任务是将用户的创作意图与应用场景画面纪律、已选定的画风 Skill 规范、版式、配色润色成真正可直接出图的专业提示词；对于用户未锁定的维度则保持自然和谐发挥。\n${formatInstruction}`,
-          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+          thinkingConfig: { thinkingLevel: gemini.ThinkingLevel.LOW },
         },
       });
 
@@ -706,6 +1479,146 @@ async function startServer() {
     }
   });
 
+  // --- Server-Side Image Generation Endpoint (5-Credit Quota + Admin Key) ---
+  app.post('/api/images/generate', async (req, res) => {
+    let reservedAccountKey: string | null = null;
+    let creditSource: CreditBucketSource | null = null;
+    try {
+      const {
+        accountKey: rawKey,
+        draft,
+        modelId,
+        format = 'cn_natural',
+      } = req.body as {
+        accountKey?: string;
+        draft?: Partial<CreationDraft>;
+        modelId?: string;
+        format?: PromptFormat;
+      };
+
+      const accountKey = sanitizeAccountKey(rawKey);
+      if (!accountKey) {
+        res.status(401).json({ message: '请先登录账号后再使用站内生图功能。' });
+        return;
+      }
+      if (!draft || typeof draft.topic !== 'string' || !draft.topic.trim()) {
+        res.status(400).json({ message: '请先填写想画的主题或文案内容。' });
+        return;
+      }
+
+      const enabledModels = imageModelsStore.filter((m) => {
+        if (!m.enabled) return false;
+        const { effectiveKey } = resolveModelKeyStatus(m, process.env.GEMINI_API_KEY);
+        return Boolean(effectiveKey);
+      });
+
+      const selectedModel =
+        (modelId ? enabledModels.find((m) => m.id === modelId) : undefined) ??
+        enabledModels.find((m) => m.isDefault) ??
+        enabledModels[0];
+
+      if (!selectedModel) {
+        res.status(503).json({
+          code: 'IMAGE_MODEL_UNCONFIGURED',
+          message: '管理员尚未配置并启用生图模型 Key，请先在后台「生图模型与 Key」完成配置。',
+        });
+        return;
+      }
+
+      const { effectiveKey } = resolveModelKeyStatus(selectedModel, process.env.GEMINI_API_KEY);
+      if (!effectiveKey) {
+        res.status(503).json({
+          code: 'IMAGE_MODEL_UNCONFIGURED',
+          message: '所选生图模型未配置有效 API Key。',
+        });
+        return;
+      }
+
+      const liveSkills = getLiveSkills();
+      const safeFormat: PromptFormat =
+        format === 'en_mj' || format === 'safe_style' ? format : 'cn_natural';
+      const safeKind: PurposeKind =
+        draft.kind && VALID_PURPOSE_KINDS.has(draft.kind) ? draft.kind : 'social-card';
+      const normalizedDraft: CreationDraft = {
+        kind: safeKind,
+        topic: draft.topic.trim(),
+        layoutId: typeof draft.layoutId === 'string' ? draft.layoutId : '',
+        styleId: typeof draft.styleId === 'string' ? draft.styleId : '',
+        primaryColorId: typeof draft.primaryColorId === 'string' ? draft.primaryColorId : '',
+        accentColorIds: Array.isArray(draft.accentColorIds)
+          ? draft.accentColorIds.filter((x): x is string => typeof x === 'string')
+          : [],
+        ratio: typeof draft.ratio === 'string' ? draft.ratio : '3:4',
+      };
+      const selectedStyle = normalizedDraft.styleId
+        ? liveSkills.find((s) => s.id === normalizedDraft.styleId) ?? null
+        : null;
+      const purpose = PURPOSES.find((p) => p.id === normalizedDraft.kind) ?? PURPOSES[0];
+      const ratio =
+        normalizedDraft.ratio || selectedStyle?.defaultRatio || purpose.recommendedRatio || '3:4';
+      const promptText = buildStructuredPrompt(normalizedDraft, safeFormat, liveSkills);
+
+      // Reserve 1 credit synchronously BEFORE any async network call
+      const currentQuota = getOrCreateUserQuota(accountKey);
+      const reservation = reserveOneCredit(currentQuota, selectedModel.label);
+      if (!reservation.ok) {
+        res.status(402).json({
+          code: 'QUOTA_EXHAUSTED',
+          message: reservation.error,
+          quota: currentQuota,
+        });
+        return;
+      }
+      saveUserQuotas({
+        ...userQuotasStore,
+        [accountKey]: reservation.nextQuota,
+      });
+      reservedAccountKey = accountKey;
+      creditSource = reservation.source;
+
+      const { buffer, mimeType } = await callUpstreamImageProvider({
+        model: selectedModel,
+        apiKey: effectiveKey,
+        prompt: promptText,
+        ratio,
+        negativePrompt: selectedStyle?.negativePrompt,
+      });
+
+      const imageUrl = persistGeneratedImageBuffer(buffer, mimeType);
+      const latestQuota = userQuotasStore[accountKey] ?? reservation.nextQuota;
+      res.json({
+        imageUrl,
+        promptText,
+        modelId: selectedModel.id,
+        modelLabel: selectedModel.label,
+        provider: selectedModel.provider,
+        ratio,
+        quota: latestQuota,
+      });
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : '生图服务调用失败';
+      if (reservedAccountKey && creditSource) {
+        const latest = getOrCreateUserQuota(reservedAccountKey);
+        const refunded = refundOneCredit(latest, creditSource, reason);
+        saveUserQuotas({
+          ...userQuotasStore,
+          [reservedAccountKey]: refunded,
+        });
+        res.status(422).json({
+          code: 'IMAGE_GENERATION_FAILED',
+          message: `生图失败（已自动退回 1 次额度）：${reason}`,
+          refunded: true,
+          quota: refunded,
+        });
+        return;
+      }
+      res.status(500).json({
+        code: 'IMAGE_GENERATION_ERROR',
+        message: `生图请求处理异常：${reason}`,
+      });
+    }
+  });
+
   if (isProduction) {
     const distDir = path.resolve(__dirname, 'dist');
     app.use(express.static(distDir));
@@ -713,14 +1626,36 @@ async function startServer() {
       res.sendFile(path.join(distDir, 'index.html'));
     });
   } else {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
+    const disableHmr = process.env.DISABLE_HMR === 'true';
+    const vitePromise = import('vite')
+      .then(({ createServer: createViteServer }) =>
+        createViteServer({
+          server: {
+            middlewareMode: true,
+            hmr: disableHmr ? false : undefined,
+            ws: disableHmr ? false : undefined,
+            watch: disableHmr ? null : undefined,
+          },
+          appType: 'spa',
+        })
+      )
+      .catch((err) => {
+        console.error('Failed to initialize Vite dev middleware:', err);
+        process.exit(1);
+      });
+
+    app.use(async (req, res, next) => {
+      try {
+        const vite = await vitePromise;
+        vite.middlewares(req, res, next);
+      } catch (err) {
+        next(err);
+      }
     });
-    app.use(vite.middlewares);
 
     app.use('*', async (req, res, next) => {
       try {
+        const vite = await vitePromise;
         const templatePath = path.resolve(__dirname, 'index.html');
         let html = fs.readFileSync(templatePath, 'utf-8');
         html = await vite.transformIndexHtml(req.originalUrl, html);
@@ -731,8 +1666,8 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Handraw server running at http://localhost:${PORT}`);
+  app.listen(PORT, HOST, () => {
+    console.log(`Handraw server running at http://${HOST}:${PORT}`);
   });
 }
 

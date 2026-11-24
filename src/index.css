@@ -36,13 +36,27 @@
     color: var(--ink);
     background-color: var(--bg);
     -webkit-font-smoothing: antialiased;
+    max-width: 100%;
+    overflow-x: clip;
+    overscroll-behavior: none;
+    touch-action: pan-y;
+    -webkit-text-size-adjust: 100%;
   }
 
   body {
     margin: 0;
     min-height: 100vh;
+    max-width: 100%;
+    overflow-x: clip;
+    overscroll-behavior: none;
+    touch-action: pan-y;
     background-color: var(--bg);
     color: var(--ink);
+  }
+
+  img {
+    -webkit-user-drag: none;
+    user-select: none;
   }
 
   button,
@@ -53,6 +67,14 @@
     touch-action: manipulation;
   }
 
+  button,
+  [role="tab"],
+  [role="radio"],
+  nav {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
   button:focus-visible,
   a:focus-visible,
   input:focus-visible,
@@ -61,6 +83,13 @@
     outline: 2px solid var(--seal);
     outline-offset: 2px;
   }
+}
+
+/* Safe contained horizontal scroller for filter strips on narrow screens */
+.horizontal-scroll {
+  overscroll-behavior-x: contain;
+  touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch;
 }
 
 .font-editorial {

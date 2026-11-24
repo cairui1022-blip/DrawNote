@@ -1,0 +1,143 @@
+{
+  "username:121212": {
+    "accountKey": "username:121212",
+    "creditsGift": 5,
+    "creditsRedeem": 0,
+    "creditsPaid": 0,
+    "totalCredits": 5,
+    "usedCount": 0,
+    "redeemedCodes": [],
+    "creditLogs": [
+      {
+        "id": "log_refund_1795533438711_340",
+        "title": "生图失败自动退回",
+        "detail": "Model not exist.",
+        "delta": "可用 +1",
+        "createdAt": "2026/11/24 15:17:18"
+      },
+      {
+        "id": "log_img_1795533436083_469",
+        "title": "站内生图 (通义千问 Qwen 生图)",
+        "detail": "调用服务端生图模型",
+        "delta": "可用 -1",
+        "createdAt": "2026/11/24 15:17:16"
+      },
+      {
+        "id": "log_refund_1795533199482_795",
+        "title": "生图失败自动退回",
+        "detail": "Model not exist.",
+        "delta": "可用 +1",
+        "createdAt": "2026/11/24 15:13:19"
+      },
+      {
+        "id": "log_img_1795533196745_451",
+        "title": "站内生图 (通义千问 Qwen 生图)",
+        "detail": "调用服务端生图模型",
+        "delta": "可用 -1",
+        "createdAt": "2026/11/24 15:13:16"
+      },
+      {
+        "id": "log_refund_1795533181884_177",
+        "title": "生图失败自动退回",
+        "detail": "Model not exist.",
+        "delta": "可用 +1",
+        "createdAt": "2026/11/24 15:13:01"
+      },
+      {
+        "id": "log_img_1795533181429_668",
+        "title": "站内生图 (通义千问 Qwen 生图)",
+        "detail": "调用服务端生图模型",
+        "delta": "可用 -1",
+        "createdAt": "2026/11/24 15:13:01"
+      },
+      {
+        "id": "log_refund_1795533179346_2",
+        "title": "生图失败自动退回",
+        "detail": "Model not exist.",
+        "delta": "可用 +1",
+        "createdAt": "2026/11/24 15:12:59"
+      },
+      {
+        "id": "log_img_1795533178395_338",
+        "title": "站内生图 (通义千问 Qwen 生图)",
+        "detail": "调用服务端生图模型",
+        "delta": "可用 -1",
+        "createdAt": "2026/11/24 15:12:58"
+      },
+      {
+        "id": "log_refund_1795533175621_773",
+        "title": "生图失败自动退回",
+        "detail": "Model not exist.",
+        "delta": "可用 +1",
+        "createdAt": "2026/11/24 15:12:55"
+      },
+      {
+        "id": "log_img_1795533175190_522",
+        "title": "站内生图 (通义千问 Qwen 生图)",
+        "detail": "调用服务端生图模型",
+        "delta": "可用 -1",
+        "createdAt": "2026/11/24 15:12:55"
+      },
+      {
+        "id": "log_refund_1795533171213_465",
+        "title": "生图失败自动退回",
+        "detail": "Model not exist.",
+        "delta": "可用 +1",
+        "createdAt": "2026/11/24 15:12:51"
+      },
+      {
+        "id": "log_img_1795533168656_613",
+        "title": "站内生图 (通义千问 Qwen 生图)",
+        "detail": "调用服务端生图模型",
+        "delta": "可用 -1",
+        "createdAt": "2026/11/24 15:12:48"
+      },
+      {
+        "id": "log_refund_1795533163333_229",
+        "title": "生图失败自动退回",
+        "detail": "Model not exist.",
+        "delta": "可用 +1",
+        "createdAt": "2026/11/24 15:12:43"
+      },
+      {
+        "id": "log_img_1795533160605_675",
+        "title": "站内生图 (通义千问 Qwen 生图)",
+        "detail": "调用服务端生图模型",
+        "delta": "可用 -1",
+        "createdAt": "2026/11/24 15:12:40"
+      },
+      {
+        "id": "log_welcome_1795532235338",
+        "title": "新用户赠送",
+        "detail": "首次登录建档，获赠 5 次生图额度",
+        "delta": "可用 +5",
+        "createdAt": "2026/11/24 14:57:15"
+      }
+    ]
+  },
+  "username:verify_test": {
+    "accountKey": "username:verify_test",
+    "creditsGift": 4,
+    "creditsRedeem": 0,
+    "creditsPaid": 0,
+    "totalCredits": 4,
+    "usedCount": 1,
+    "redeemedCodes": [],
+    "creditLogs": [
+      {
+        "id": "log_img_1795533669508_488",
+        "title": "站内生图 (通义千问 Qwen 生图)",
+        "detail": "调用服务端生图模型",
+        "delta": "可用 -1",
+        "createdAt": "2026/11/24 15:21:09"
+      },
+      {
+        "id": "log_welcome_1795533669507",
+        "title": "新用户赠送",
+        "detail": "首次登录建档，获赠 5 次生图额度",
+        "delta": "可用 +5",
+        "createdAt": "2026/11/24 15:21:09"
+      }
+    ]
+  }
+}

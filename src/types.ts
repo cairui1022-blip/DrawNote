@@ -137,6 +137,8 @@ export interface PromptHistoryRecord {
   format: PromptFormat;
   usedAi: boolean;
   promptText: string;
+  imageUrl?: string;
+  modelLabel?: string;
   draft: CreationDraft;
 }
 
@@ -168,6 +170,14 @@ export interface UserTemplate {
 
 export type AuthMethod = 'email' | 'username';
 
+export interface CreditLogEntry {
+  id: string;
+  title: string;
+  detail: string;
+  delta: string;
+  createdAt: string;
+}
+
 export interface UserSession {
   accountKey: string;
   authType: AuthMethod;
@@ -182,13 +192,7 @@ export interface UserSession {
   joinedAt: string;
   waitlistSubscribed: boolean;
   redeemedCodes: string[];
-  creditLogs: Array<{
-    id: string;
-    title: string;
-    detail: string;
-    delta: string;
-    createdAt: string;
-  }>;
+  creditLogs: CreditLogEntry[];
 }
 
 export interface AdminUser {
@@ -201,4 +205,48 @@ export interface AdminStatus {
   envConfigured: boolean;
   adminUsername?: string;
 }
+
+export type ImageProviderType = 'qwen' | 'jimeng' | 'gemini' | 'openai-compatible';
+
+export interface ImageModelPublicConfig {
+  id: string;
+  label: string;
+  provider: ImageProviderType;
+  modelName: string;
+  isDefault: boolean;
+  supportedRatios: string[];
+}
+
+export interface ImageModelAdminConfig extends ImageModelPublicConfig {
+  baseUrl: string;
+  enabled: boolean;
+  hasApiKey: boolean;
+  apiKeyMasked: string;
+  keySource: 'stored' | 'env' | 'none';
+  updatedAt?: string;
+}
+
+export interface ImageModelUpsertInput {
+  id?: string;
+  label: string;
+  provider: ImageProviderType;
+  modelName: string;
+  baseUrl?: string;
+  apiKey?: string;
+  enabled: boolean;
+  isDefault?: boolean;
+  supportedRatios?: string[];
+}
+
+export interface ServerUserQuota {
+  accountKey: string;
+  creditsGift: number;
+  creditsRedeem: number;
+  creditsPaid: number;
+  totalCredits: number;
+  usedCount: number;
+  redeemedCodes: string[];
+  creditLogs: CreditLogEntry[];
+}
+
 

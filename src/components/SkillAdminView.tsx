@@ -24,8 +24,10 @@ import {
 } from '../data/catalog';
 import { formatStyleSkillMarkdown } from '../utils/promptEngine';
 import { StyleArtwork } from './CatalogArtwork';
+import { ImageModelsAdminPanel } from './ImageModelsAdminPanel';
 import type {
   ConcreteStyleCategory,
+  ImageModelPublicConfig,
   PurposeKind,
   StyleItem,
   StyleSourceRepo,
@@ -35,6 +37,7 @@ interface SkillAdminViewProps {
   adminToken: string;
   skills: StyleItem[];
   onSkillsUpdated: (nextSkills: StyleItem[]) => void;
+  onAvailableImageModelsChanged?: (models: ImageModelPublicConfig[]) => void;
   onTryInWorkbench: (styleId: string) => void;
   onAdminUnauthorized?: () => void;
 }
@@ -79,9 +82,11 @@ export function SkillAdminView({
   adminToken,
   skills,
   onSkillsUpdated,
+  onAvailableImageModelsChanged,
   onTryInWorkbench,
   onAdminUnauthorized,
 }: SkillAdminViewProps) {
+  const [adminSection, setAdminSection] = useState<'skills' | 'image-models'>('skills');
   const authHeaders = (json = false): Record<string, string> => ({
     ...(json ? { 'Content-Type': 'application/json' } : {}),
     Authorization: `Bearer ${adminToken}`,
@@ -442,32 +447,70 @@ export function SkillAdminView({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
-          <button
-            type="button"
-            onClick={() => setImportOpen(true)}
-            className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-xl border border-[var(--border)] bg-white px-3.5 py-2 text-xs font-medium text-[var(--ink)] hover:border-[var(--green)] hover:bg-[var(--light)]"
-          >
-            <Upload className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>导入 SKILL.md / JSON</span>
-          </button>
-          <button
-            type="button"
-            disabled={busyAction}
-            onClick={handleResetDefaults}
-            className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-xl border border-[var(--border)] bg-white px-3.5 py-2 text-xs font-medium text-[var(--ink-soft)] hover:bg-[var(--light)] disabled:opacity-50"
-          >
-            <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>恢复默认库</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setCreateOpen(true)}
-            className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-xl bg-[var(--green)] px-4 py-2 text-xs font-semibold text-white hover:bg-[var(--green-hover)]"
-          >
-            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-            <span>新建风格 Skill</span>
-          </button>
+          {adminSection === 'skills' && (
+            <>
+              <button
+                type="button"
+                onClick={() => setImportOpen(true)}
+                className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-xl border border-[var(--border)] bg-white px-3.5 py-2 text-xs font-medium text-[var(--ink)] hover:border-[var(--green)] hover:bg-[var(--light)]"
+              >
+                <Upload className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>导入 SKILL.md / JSON</span>
+              </button>
+              <button
+                type="button"
+                disabled={busyAction}
+                onClick={handleResetDefaults}
+                className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-xl border border-[var(--border)] bg-white px-3.5 py-2 text-xs font-medium text-[var(--ink-soft)] hover:bg-[var(--light)] disabled:opacity-50"
+              >
+                <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>恢复默认库</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setCreateOpen(true)}
+                className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-xl bg-[var(--green)] px-4 py-2 text-xs font-semibold text-white hover:bg-[var(--green-hover)]"
+              >
+                <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>新建风格 Skill</span>
+              </button>
+            </>
+          )}
         </div>
+      </div>
+
+      {/* Admin Module Tab Switcher */}
+      <div
+        role="tablist"
+        aria-label="后台管理模块"
+        className="mt-4 flex items-center gap-2 border-b border-[var(--border)]"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={adminSection === 'skills'}
+          onClick={() => setAdminSection('skills')}
+          className={`-mb-px cursor-pointer border-b-2 px-4 py-2.5 text-xs font-semibold transition-colors ${
+            adminSection === 'skills'
+              ? 'border-[var(--green)] text-[var(--green)]'
+              : 'border-transparent text-[var(--muted)] hover:text-[var(--ink)]'
+          }`}
+        >
+          风格 Skill 配置 ({counts.total})
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={adminSection === 'image-models'}
+          onClick={() => setAdminSection('image-models')}
+          className={`-mb-px cursor-pointer border-b-2 px-4 py-2.5 text-xs font-semibold transition-colors ${
+            adminSection === 'image-models'
+              ? 'border-[var(--green)] text-[var(--green)]'
+              : 'border-transparent text-[var(--muted)] hover:text-[var(--ink)]'
+          }`}
+        >
+          生图模型与 Key（Qwen / 即梦）
+        </button>
       </div>
 
       {/* Inline Toast Feedback */}
@@ -492,6 +535,14 @@ export function SkillAdminView({
         </div>
       )}
 
+      {adminSection === 'image-models' ? (
+        <ImageModelsAdminPanel
+          adminToken={adminToken}
+          onAvailableModelsChanged={(next) => onAvailableImageModelsChanged?.(next)}
+          onAdminUnauthorized={onAdminUnauthorized}
+        />
+      ) : (
+        <>
       {/* Compact Summary Metrics Bar */}
       <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-5">
         {[
@@ -1116,6 +1167,8 @@ export function SkillAdminView({
           )}
         </section>
       </div>
+        </>
+      )}
 
       {/* Create Custom Style Skill Modal */}
       {createOpen && (

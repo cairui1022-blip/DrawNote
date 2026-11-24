@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ArrowLeft, KeyRound, Lock, LogOut, ShieldCheck } from 'lucide-react';
 import { SkillAdminView } from './SkillAdminView';
-import type { AdminStatus, AdminUser, StyleItem } from '../types';
+import type { AdminStatus, AdminUser, ImageModelPublicConfig, StyleItem } from '../types';
 
 interface AdminConsoleViewProps {
   adminToken: string | null;
@@ -10,6 +10,7 @@ interface AdminConsoleViewProps {
   onAdminAuthenticated: (token: string, user: AdminUser) => void;
   onAdminLogout: () => void;
   onSkillsUpdated: (nextSkills: StyleItem[]) => void;
+  onAvailableImageModelsChanged?: (models: ImageModelPublicConfig[]) => void;
   onBackToSite: () => void;
   onTryInWorkbench: (styleId: string) => void;
 }
@@ -21,6 +22,7 @@ export function AdminConsoleView({
   onAdminAuthenticated,
   onAdminLogout,
   onSkillsUpdated,
+  onAvailableImageModelsChanged,
   onBackToSite,
   onTryInWorkbench,
 }: AdminConsoleViewProps) {
@@ -187,6 +189,7 @@ export function AdminConsoleView({
             adminToken={adminToken}
             skills={skills}
             onSkillsUpdated={onSkillsUpdated}
+            onAvailableImageModelsChanged={onAvailableImageModelsChanged}
             onTryInWorkbench={onTryInWorkbench}
             onAdminUnauthorized={onAdminLogout}
           />

@@ -255,11 +255,11 @@ export function LandingView({
               </span>
             </div>
 
-            <h1 className="mt-5 font-editorial text-4xl font-bold leading-[1.12] tracking-tight text-[var(--ink)] text-balance sm:text-5xl lg:text-[60px]">
+            <h1 className="mt-5 font-editorial text-[34px] font-bold leading-[1.15] tracking-tight text-[var(--ink)] text-balance sm:text-5xl lg:text-[60px]">
               把想法，画出来。
             </h1>
 
-            <p className="mt-5 max-w-lg text-[15px] leading-relaxed text-[var(--ink-soft)]">
+            <p className="mt-4 max-w-lg text-[15px] leading-[1.7] text-[var(--ink-soft)] sm:mt-5">
               收录 <span className="font-tabular font-semibold text-[var(--ink)]">{activeCatalog.length}</span>{' '}
               种实拍插画与摄影媒介、<span className="font-tabular font-semibold text-[var(--ink)]">{LAYOUTS.length}</span>{' '}
               套构图版式与 36 组标准色板——按场景与流派自由组合，把一句话变成可直接出图的专业提示词。
@@ -269,21 +269,21 @@ export function LandingView({
               <button
                 type="button"
                 onClick={() => onStartCreation()}
-                className="inline-flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-[4px] bg-[var(--ink)] px-6 py-3 text-sm font-semibold text-[#fbf9f4] transition-colors hover:bg-[#2e2e2b]"
+                className="inline-flex min-h-[44px] cursor-pointer items-center gap-2 whitespace-nowrap rounded-[4px] bg-[var(--ink)] px-6 py-3 text-sm font-semibold text-[#fbf9f4] transition-colors hover:bg-[#2e2e2b]"
               >
                 <span>{isLoggedIn ? '进入创作画案' : '开始创作'}</span>
                 <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
               </button>
               <a
                 href="#artworks"
-                className="inline-flex items-center gap-1.5 whitespace-nowrap border-b border-[var(--ink)] pb-0.5 text-sm font-medium text-[var(--ink)] transition-colors hover:border-[var(--seal)] hover:text-[var(--seal)]"
+                className="inline-flex min-h-[44px] items-center gap-1.5 whitespace-nowrap border-b border-[var(--ink)] pb-0.5 text-sm font-medium text-[var(--ink)] transition-colors hover:border-[var(--seal)] hover:text-[var(--seal)] sm:min-h-0"
               >
                 <span>翻阅画风年鉴</span>
                 <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />
               </a>
             </div>
 
-            <div className="mt-7 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-[var(--muted)]">
+            <div className="mt-6 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[13px] text-[var(--muted)] sm:mt-7 sm:text-xs">
               <span>提示词不限次免费生成</span>
               <span>画面条件均可留空</span>
               <span>支持个人常用模板</span>
@@ -397,7 +397,7 @@ export function LandingView({
                       className="h-full w-full object-cover"
                     />
                   </div>
-                  <span className="mt-1 flex items-center justify-between font-tabular text-[10px] text-[var(--muted)]">
+                  <span className="mt-1.5 flex items-center justify-between font-tabular text-xs text-[var(--muted)]">
                     <span>FIG.{plate.plateNo}</span>
                     <span className="truncate pl-1.5 text-[var(--ink-soft)]">
                       {plate.style?.title ?? plate.fallbackTitle}
@@ -424,14 +424,14 @@ export function LandingView({
           <div
             role="tablist"
             aria-label="按应用场景筛选画风"
-            className="no-scrollbar -mb-px flex items-center gap-6 overflow-x-auto sm:gap-7"
+            className="horizontal-scroll no-scrollbar -mb-px flex items-center gap-6 overflow-x-auto sm:gap-7"
           >
             <button
               type="button"
               role="tab"
               aria-selected={activeScene === 'all'}
               onClick={() => setActiveScene('all')}
-              className={`shrink-0 cursor-pointer whitespace-nowrap border-b-2 pb-3.5 pt-2 text-[14px] transition-colors ${
+              className={`min-h-[44px] shrink-0 cursor-pointer whitespace-nowrap border-b-2 pb-3 pt-2 text-[15px] transition-colors sm:min-h-0 sm:pb-3.5 sm:text-[14px] ${
                 activeScene === 'all'
                   ? 'border-[var(--seal)] font-semibold text-[var(--seal)]'
                   : 'border-transparent font-medium text-[var(--ink-soft)] hover:text-[var(--ink)]'
@@ -449,7 +449,7 @@ export function LandingView({
                   role="tab"
                   aria-selected={active}
                   onClick={() => setActiveScene(purpose.id)}
-                  className={`shrink-0 cursor-pointer whitespace-nowrap border-b-2 pb-3.5 pt-2 text-[14px] transition-colors ${
+                  className={`min-h-[44px] shrink-0 cursor-pointer whitespace-nowrap border-b-2 pb-3 pt-2 text-[15px] transition-colors sm:min-h-0 sm:pb-3.5 sm:text-[14px] ${
                     active
                       ? 'border-[var(--seal)] font-semibold text-[var(--seal)]'
                       : 'border-transparent font-medium text-[var(--ink-soft)] hover:text-[var(--ink)]'
@@ -462,9 +462,9 @@ export function LandingView({
           </div>
 
           <div className="flex w-full items-center gap-2 pb-3 lg:w-auto">
-            <div className="relative flex-1 lg:w-64">
+            <div className="relative min-w-0 flex-1 lg:w-64">
               <Search
-                className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--muted)]"
+                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted)] sm:h-3.5 sm:w-3.5"
                 aria-hidden="true"
               />
               <input
@@ -473,14 +473,14 @@ export function LandingView({
                 onChange={(e) => setSearchQuery(e.target.value)}
                 aria-label="搜索画风名称或关键词"
                 placeholder="搜索画风、材质、流派或编号…"
-                className="w-full rounded-[4px] border border-[var(--border)] bg-[var(--paper)] py-1.5 pl-8 pr-3 text-xs text-[var(--ink)] placeholder:text-[#9b9991]"
+                className="w-full rounded-[4px] border border-[var(--border)] bg-[var(--paper)] py-2 pl-9 pr-3 text-base text-[var(--ink)] placeholder:text-[#9b9991] sm:py-1.5 sm:pl-8 sm:text-xs"
               />
             </div>
 
             <button
               type="button"
               onClick={handleSurpriseStyle}
-              className="inline-flex shrink-0 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-[4px] border border-[var(--border)] bg-[var(--paper)] px-3 py-1.5 text-xs font-medium text-[var(--ink)] transition-colors hover:border-[var(--seal)] hover:text-[var(--seal)]"
+              className="inline-flex min-h-[40px] shrink-0 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-[4px] border border-[var(--border)] bg-[var(--paper)] px-3.5 py-2 text-xs font-medium text-[var(--ink)] transition-colors hover:border-[var(--seal)] hover:text-[var(--seal)] sm:min-h-0 sm:px-3 sm:py-1.5"
             >
               <Shuffle className="h-3.5 w-3.5" aria-hidden="true" />
               <span>手气不错</span>
@@ -488,11 +488,11 @@ export function LandingView({
           </div>
         </div>
 
-        {/* Row 2: Clean Inline Style Tag Strip (Zero noisy pill clutter) */}
+        {/* Row 2: Clean Inline Style Tag Strip */}
         <div
           role="tablist"
           aria-label="风格标签筛选"
-          className="no-scrollbar flex items-center gap-1 overflow-x-auto border-b border-[var(--border)] py-3"
+          className="horizontal-scroll no-scrollbar flex items-center gap-1.5 overflow-x-auto border-b border-[var(--border)] py-3"
         >
           {UNIFIED_STYLE_TAGS.map((tag) => {
             const active = activeTagId === tag.id;
@@ -505,7 +505,7 @@ export function LandingView({
                 aria-selected={active}
                 disabled={count === 0 && !active}
                 onClick={() => setActiveTagId(tag.id)}
-                className={`inline-flex shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-[3px] px-2.5 py-1 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-35 ${
+                className={`inline-flex min-h-[36px] shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-[3px] px-3 py-1.5 text-[13px] transition-colors disabled:cursor-not-allowed disabled:opacity-35 sm:min-h-0 sm:px-2.5 sm:py-1 sm:text-xs ${
                   active
                     ? 'bg-[var(--ink)] font-semibold text-[#fbf9f4]'
                     : 'text-[var(--ink-soft)] hover:bg-[var(--light)] hover:text-[var(--ink)]'
@@ -513,7 +513,7 @@ export function LandingView({
               >
                 <span>{tag.label}</span>
                 <span
-                  className={`font-tabular text-[10px] ${
+                  className={`font-tabular text-xs sm:text-[11px] ${
                     active ? 'text-[#fbf9f4]/75' : 'text-[var(--muted)]'
                   }`}
                 >
@@ -558,7 +558,7 @@ export function LandingView({
 
             {selectedPurpose.usesLayout && sceneLayouts.length > 0 && (
               <div className="mt-4 pt-3 border-t border-[var(--border)]/70">
-                <div className="mb-2.5 flex items-center justify-between text-[11px] text-[var(--muted)]">
+                <div className="mb-2.5 flex items-center justify-between text-xs text-[var(--muted)] sm:text-[11px]">
                   <span>
                     {selectedPurpose.label}专属版式示例（共 {sceneLayoutsCount} 套 · 点击直接锁定该版式进入画案）
                   </span>
@@ -584,7 +584,7 @@ export function LandingView({
                         className="h-11 w-11 shrink-0 rounded-[2px] p-0.5"
                       />
                       <div className="min-w-0 flex-1">
-                        <span className="block font-tabular text-[10px] text-[var(--muted)]">
+                        <span className="block font-tabular text-xs text-[var(--muted)] sm:text-[10px]">
                           {layout.id}
                         </span>
                         <span className="block truncate text-xs font-medium text-[var(--ink)] group-hover:text-[var(--seal)]">
@@ -680,13 +680,13 @@ export function LandingView({
                       onClick={() => onToggleFavoriteStyle(style.id)}
                       aria-label={isFav ? `取消收藏 ${style.title}` : `收藏 ${style.title}`}
                       aria-pressed={isFav}
-                      className={`absolute right-3 top-3 flex h-7 w-7 cursor-pointer items-center justify-center rounded-[3px] border bg-[var(--paper)]/95 transition-all ${
+                      className={`absolute right-3 top-3 flex h-9 w-9 cursor-pointer items-center justify-center rounded-[3px] border bg-[var(--paper)]/95 transition-all sm:h-7 sm:w-7 ${
                         isFav
                           ? 'border-[var(--seal)]/40 text-[var(--seal)] opacity-100'
                           : 'border-[var(--border)] text-[var(--muted)] opacity-90 hover:text-[var(--seal)] sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100'
                       }`}
                     >
-                      <Heart className={`h-3.5 w-3.5 ${isFav ? 'fill-current' : ''}`} />
+                      <Heart className={`h-4 w-4 sm:h-3.5 sm:w-3.5 ${isFav ? 'fill-current' : ''}`} />
                     </button>
 
                     {/* Subtle Hover Quick Actions */}
@@ -722,13 +722,13 @@ export function LandingView({
                       onClick={() => setActiveStyle(style)}
                       className="block w-full cursor-pointer text-left"
                     >
-                      <h3 className="truncate text-[14px] font-semibold leading-snug text-[var(--ink)] transition-colors group-hover:text-[var(--seal)]">
+                      <h3 className="truncate text-[15px] font-semibold leading-snug text-[var(--ink)] transition-colors group-hover:text-[var(--seal)] sm:text-[14px]">
                         {style.title}
                       </h3>
                     </button>
 
                     <div className="mt-1 flex items-center justify-between gap-2">
-                      <div className="flex min-w-0 items-center gap-1.5 truncate text-[11px] text-[var(--muted)]">
+                      <div className="flex min-w-0 items-center gap-1.5 truncate text-xs text-[var(--muted)] sm:text-[11px]">
                         <span className="font-tabular shrink-0">{style.id}</span>
                         <span aria-hidden="true">·</span>
                         <span className="truncate">{categoryTag}</span>
@@ -822,7 +822,7 @@ export function LandingView({
       <section className="border-t border-[var(--border)] bg-[var(--paper)]">
         <div className="mx-auto grid max-w-[1400px] gap-10 px-5 py-14 md:px-8 lg:grid-cols-12 lg:items-start lg:gap-12 lg:py-16">
           <div className="lg:col-span-5">
-            <p className="font-tabular text-[11px] font-semibold tracking-[0.12em] text-[var(--seal)]">
+            <p className="font-tabular text-xs font-semibold tracking-[0.12em] text-[var(--seal)] sm:text-[11px]">
               NO.02 · STUDIO WORKFLOW
             </p>
             <h2 className="mt-2 font-editorial text-2xl font-bold leading-snug text-[var(--ink)] sm:text-3xl">
@@ -844,7 +844,7 @@ export function LandingView({
                 role="tab"
                 aria-selected={activeTab === 'prompt'}
                 onClick={() => setActiveTab('prompt')}
-                className={`-mb-px cursor-pointer whitespace-nowrap border-b-2 pb-2.5 text-xs font-semibold transition-colors ${
+                className={`-mb-px min-h-[40px] cursor-pointer whitespace-nowrap border-b-2 pb-2.5 text-[13px] font-semibold transition-colors sm:min-h-0 sm:text-xs ${
                   activeTab === 'prompt'
                     ? 'border-[var(--seal)] text-[var(--seal)]'
                     : 'border-transparent text-[var(--muted)] hover:text-[var(--ink)]'
@@ -857,7 +857,7 @@ export function LandingView({
                 role="tab"
                 aria-selected={activeTab === 'image'}
                 onClick={() => setActiveTab('image')}
-                className={`-mb-px cursor-pointer whitespace-nowrap border-b-2 pb-2.5 text-xs font-semibold transition-colors ${
+                className={`-mb-px min-h-[40px] cursor-pointer whitespace-nowrap border-b-2 pb-2.5 text-[13px] font-semibold transition-colors sm:min-h-0 sm:text-xs ${
                   activeTab === 'image'
                     ? 'border-[var(--seal)] text-[var(--seal)]'
                     : 'border-transparent text-[var(--muted)] hover:text-[var(--ink)]'
@@ -981,7 +981,7 @@ export function LandingView({
               <div className="subtle-scroll flex flex-col justify-between p-6 md:col-span-5 md:overflow-y-auto">
                 <dl className="divide-y divide-[var(--border)]">
                   <div className="pb-4">
-                    <dt className="text-[11px] font-semibold tracking-wider text-[var(--muted)]">
+                    <dt className="text-xs font-semibold tracking-wider text-[var(--muted)] sm:text-[11px]">
                       画风说明
                     </dt>
                     <dd className="mt-1.5 text-sm leading-relaxed text-[var(--ink-soft)]">
@@ -990,7 +990,7 @@ export function LandingView({
                   </div>
 
                   <div className="py-4">
-                    <dt className="text-[11px] font-semibold tracking-wider text-[var(--muted)]">
+                    <dt className="text-xs font-semibold tracking-wider text-[var(--muted)] sm:text-[11px]">
                       核心笔触与媒介特征
                     </dt>
                     <dd className="mt-1.5 text-xs leading-relaxed text-[var(--ink-soft)]">
@@ -1003,7 +1003,7 @@ export function LandingView({
                     if (modalPalette.length === 0) return null;
                     return (
                       <div className="py-4">
-                        <dt className="text-[11px] font-semibold tracking-wider text-[var(--muted)]">
+                        <dt className="text-xs font-semibold tracking-wider text-[var(--muted)] sm:text-[11px]">
                           样图实拍取色
                         </dt>
                         <dd className="mt-2 flex flex-wrap items-center gap-3">
@@ -1013,7 +1013,7 @@ export function LandingView({
                                 className="h-5 w-5 rounded-[3px] ring-1 ring-black/15"
                                 style={{ backgroundColor: hex }}
                               />
-                              <span className="font-tabular text-[11px] text-[var(--ink-soft)]">
+                              <span className="font-tabular text-xs text-[var(--ink-soft)] sm:text-[11px]">
                                 {hex}
                               </span>
                             </div>
@@ -1024,7 +1024,7 @@ export function LandingView({
                   })()}
 
                   <div className="pt-4">
-                    <dt className="text-[11px] font-semibold tracking-wider text-[var(--muted)]">
+                    <dt className="text-xs font-semibold tracking-wider text-[var(--muted)] sm:text-[11px]">
                       适配应用场景
                     </dt>
                     <dd className="mt-1.5 text-xs font-medium text-[var(--ink)]">
